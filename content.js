@@ -942,10 +942,46 @@ function findCandidateSources(pieceLetter, color, toSquareStr) {
     return res;
 }
 
+function pieceFullNameChar(ch) {
+    if (!ch) return 'piece';
+    const c = ch.toUpperCase();
+    switch (c) {
+        case 'P': return 'Pawn';
+        case 'N': return 'Knight';
+        case 'B': return 'Bishop';
+        case 'R': return 'Rook';
+        case 'Q': return 'Queen';
+        case 'K': return 'King';
+    }
+    return 'piece';
+}
+
+function getPieceCharAt(square) {
+    const rc = squareToRC(square);
+    if (!rc) return null;
+    return getBoardArray()[rc.r][rc.c];
+}
+
+function logMoveDescription(fromSq, toSq, movingPieceChar, capturedPieceChar, promotion, color) {
+    const mover = movingPieceChar ? pieceFullNameChar(movingPieceChar) : 'Pawn';
+    const cap = capturedPieceChar ? pieceFullNameChar(capturedPieceChar) : null;
+    const whoColor = color === 'w' ? 'White' : 'Black';
+    let msg = `${whoColor} ${mover}`;
+    if (fromSq) msg += ` from ${fromSq}`;
+    msg += ` to ${toSq}`;
+    if (cap) msg += ` capturing ${cap}`;
+    if (promotion) {
+        const promName = pieceFullNameChar(promotion);
+        msg += ` and promotes to ${promName}`;
+    }
+    console.log(msg);
+}
+
+// Replace applyMoveSAN with logging-aware version
 function applyMoveSAN(moveRaw, color) {
     if (!moveRaw) return false;
     let move = moveRaw.trim();
-    // strip annotations and trailing + # ? ! (fixed: remove each annotation char)
+    // strip annotations and trailing + # ? !
     move = move.replace(/[!?+#]/g, '');
     if (move === '' ) return false;
     // normalize 0-0 variants
@@ -953,20 +989,22 @@ function applyMoveSAN(moveRaw, color) {
 
     // Castling
     if (/^O-O-O$/i.test(move)) {
-        // long castle
         if (color === 'w') {
-            // white: king e1 -> c1, rook a1 -> d1
+            // log
+            console.log('White castles long: King e1 -> c1, Rook a1 -> d1');
             setPiece('c1','K'); setPiece('d1','R'); removePiece('e1'); removePiece('a1');
         } else {
+            console.log('Black castles long: King e8 -> c8, Rook a8 -> d8');
             setPiece('c8','k'); setPiece('d8','r'); removePiece('e8'); removePiece('a8');
         }
         return true;
     }
     if (/^O-O$/i.test(move)) {
-        // short castle
         if (color === 'w') {
+            console.log('White castles short: King e1 -> g1, Rook h1 -> f1');
             setPiece('g1','K'); setPiece('f1','R'); removePiece('e1'); removePiece('h1');
         } else {
+            console.log('Black castles short: King e8 -> g8, Rook h8 -> f8');
             setPiece('g8','k'); setPiece('f8','r'); removePiece('e8'); removePiece('h8');
         }
         return true;
@@ -989,14 +1027,18 @@ function applyMoveSAN(moveRaw, color) {
             const p = getBoardArray()[fromR][fc];
             if (!p) continue;
             if ((color === 'w' && p === 'P') || (color === 'b' && p === 'p')) {
-                // remove pawn and place promotion
-                removePiece(String.fromCharCode(97 + fc) + (8 - fromR));
+                const fromSq = String.fromCharCode(97 + fc) + (8 - fromR);
+                const capturedChar = getPieceCharAt(dest);
+                logMoveDescription(fromSq, dest, 'P', capturedChar, prom, color);
+                removePiece(fromSq);
                 removePiece(dest);
                 setPiece(dest, colorPiece);
                 return true;
             }
         }
         // if not found, still place promotion on dest (best effort)
+        const capturedChar = getPieceCharAt(dest);
+        logMoveDescription(null, dest, 'P', capturedChar, prom, color);
         removePiece(dest);
         setPiece(dest, colorPiece);
         return true;
@@ -1016,8 +1058,10 @@ function applyMoveSAN(moveRaw, color) {
             if (!p) continue;
             if ((color==='w' && p==='P') || (color==='b' && p==='p')) {
                 if (canPieceMoveBasic('P', r, c, to.r, to.c, color)) {
-                    // do capture
-                    removePiece(String.fromCharCode(97 + c) + (8 - r));
+                    const fromSq = String.fromCharCode(97 + c) + (8 - r);
+                    const capturedChar = getPieceCharAt(dest);
+                    logMoveDescription(fromSq, dest, 'P', capturedChar, null, color);
+                    removePiece(fromSq);
                     removePiece(dest);
                     setPiece(dest, color === 'w' ? 'P' : 'p');
                     return true;
@@ -1044,13 +1088,17 @@ function applyMoveSAN(moveRaw, color) {
         }
         if (candidates.length === 1) {
             const fr = candidates[0].r, fc = candidates[0].c;
-            removePiece(String.fromCharCode(97 + fc) + (8 - fr));
+            const fromSq = String.fromCharCode(97 + fc) + (8 - fr);
+            logMoveDescription(fromSq, dest, 'P', getPieceCharAt(dest), null, color);
+            removePiece(fromSq);
             setPiece(dest, colorPiece);
             return true;
         }
         if (candidates.length > 0) {
             const chosen = candidates[0];
-            removePiece(String.fromCharCode(97 + chosen.c) + (8 - chosen.r));
+            const fromSq = String.fromCharCode(97 + chosen.c) + (8 - chosen.r);
+            logMoveDescription(fromSq, dest, 'P', getPieceCharAt(dest), null, color);
+            removePiece(fromSq);
             setPiece(dest, colorPiece);
             return true;
         }
@@ -1083,6 +1131,8 @@ function applyMoveSAN(moveRaw, color) {
         if (candidates.length === 0) return false;
         const chosen = candidates[0];
         const fromSq = String.fromCharCode(97 + chosen.c) + (8 - chosen.r);
+        const capturedChar = getPieceCharAt(dest);
+        logMoveDescription(fromSq, dest, pieceLetter, capturedChar, null, color);
         // perform move
         removePiece(fromSq);
         removePiece(dest);
