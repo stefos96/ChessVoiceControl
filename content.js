@@ -46,20 +46,43 @@ function cancelAutoTimer() {
 // Clear UI and immediately expect a new voice input (restart recognition unless the user stopped it)
 function clearAndRestart() {
     try {
+        // Cancel any pending auto-restart timer and clear visible UI
         cancelAutoTimer();
         clearUI();
 
-        if (manualStop) return; // do not auto-restart if user explicitly stopped
+        // If user explicitly stopped recording, don't auto-restart
+        if (manualStop) return;
 
-        if (typeof voskModeEnabled !== 'undefined' && voskModeEnabled) {
-            if (!voskWorker) {
-                try { startVoskMode(); } catch (e) { console.warn('Failed to start Vosk mode', e); }
-            } else {
-                try { window.postMessage({ source: 'voiceChessContent', type: 'start', mode: 'vosk' }, '*'); } catch (e) { /* ignore */ }
-            }
-        } else {
-            try { startRecognition(); } catch (e) { console.warn('Failed to start recognition', e); }
+        // Update UI to show we're waiting for new input
+        if (floatingDiv) {
+            const voiceText = floatingDiv.querySelector('#voiceText');
+            if (voiceText) voiceText.textContent = 'Listening...';
+            const chessNotation = floatingDiv.querySelector('#chessNotation');
+            if (chessNotation) chessNotation.textContent = '';
         }
+
+        // Try to stop any current capture/recognition first to ensure a clean restart
+        try { window.postMessage({ source: 'voiceChessContent', type: 'stop' }, '*'); } catch (e) { /* ignore */ }
+
+        // Small delay to allow the page script to fully stop before starting again
+        const restartDelay = 250;
+        setTimeout(() => {
+            try {
+                if (typeof voskModeEnabled !== 'undefined' && voskModeEnabled) {
+                    // Vosk mode: ensure worker/page are started correctly
+                    if (!voskWorker) {
+                        try { startVoskMode(); } catch (e) { console.warn('Failed to start Vosk mode', e); }
+                    } else {
+                        try { window.postMessage({ source: 'voiceChessContent', type: 'start', mode: 'vosk' }, '*'); } catch (e) { /* ignore */ }
+                    }
+                } else {
+                    // Normal web SpeechRecognition mode: (re)start recognition
+                    try { startRecognition(); } catch (e) { console.warn('Failed to start recognition', e); }
+                }
+            } catch (e) {
+                console.warn('clearAndRestart (delayed start) failed:', e);
+            }
+        }, restartDelay);
     } catch (e) {
         console.warn('clearAndRestart failed:', e);
     }
