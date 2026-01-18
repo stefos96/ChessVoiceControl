@@ -10,6 +10,7 @@ let manualStop = false; // when true, do not auto-restart recognition
 // Vocabulary
 const SPECIAL_COMMANDS = [
     'clear',
+    'cancel',
     'castle kingside', 'castle queenside', 'castle short', 'castle long', 'short castle', 'long castle',
     'o-o', 'o-o-o',
     'resign', 'resign game', 'offer draw', 'offer a draw', 'accept draw', 'accept the draw', 'decline draw', 'takeback', 'undo'
@@ -213,7 +214,7 @@ function buildVoskGrammar() {
     }
 
     // common commands
-    const commands = ['clear','castle kingside','castle queenside','o-o','o-o-o','resign','offer draw','accept draw','undo','takeback','promote to queen','promote to rook','promote to bishop','promote to knight'];
+    const commands = ['clear', 'cancel','castle kingside','castle queenside','o-o','o-o-o','resign','offer draw','accept draw','undo','takeback','promote to queen','promote to rook','promote to bishop','promote to knight'];
     for (const c of commands) phrases.push(c);
 
     // Also allow piece names (optional) and file-only (for SAN-like inputs)
@@ -675,8 +676,6 @@ function handlePageMessage(event) {
     const d = event.data || {};
     if (!d || d.source !== 'voiceChessPage') return;
 
-    console.log('voiceChess: page message received', d);
-
     if (!floatingDiv) return;
     const voiceTextEl = floatingDiv.querySelector('#voiceText');
     const chessNotationEl = floatingDiv.querySelector('#chessNotation');
@@ -700,7 +699,7 @@ function handlePageMessage(event) {
 
         // Do not auto-clear the transcript; preserve it until user clears or stops.
 
-        if (normalized.toLowerCase().includes('clear')) {
+        if (normalized.toLowerCase().includes('clear') || normalized.toLowerCase().includes('cancel')) {
             // User asked to clear; clear notation and transcript and expect new input
             clearAndRestart();
             return;
