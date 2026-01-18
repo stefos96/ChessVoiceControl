@@ -810,3 +810,297 @@ window.addEventListener('voiceChessStop', () => {
         floatingDiv = null;
     }
 });
+
+// ==========================
+// Board tracking (8x8) - parse chess.com move list and keep board state
+// ==========================
+// board[row][col] where row 0 = rank 8, row 7 = rank 1; col 0 = file a, col 7 = file h
+let boardArray = null;
+
+function createEmptyBoard() {
+    const b = [];
+    for (let r = 0; r < 8; r++) {
+        const row = new Array(8).fill(null);
+        b.push(row);
+    }
+    return b;
+}
+
+function initStartingBoard() {
+    const b = createEmptyBoard();
+    const back = ['r','n','b','q','k','b','n','r'];
+    for (let c = 0; c < 8; c++) b[0][c] = back[c]; // black back rank (row 0 = rank8)
+    for (let c = 0; c < 8; c++) b[1][c] = 'p'; // black pawns
+    for (let c = 0; c < 8; c++) b[6][c] = 'P'; // white pawns
+    const backW = ['R','N','B','Q','K','B','N','R'];
+    for (let c = 0; c < 8; c++) b[7][c] = backW[c]; // white back rank
+    boardArray = b;
+    return b;
+}
+
+function getBoardArray() {
+    if (!boardArray) initStartingBoard();
+    return boardArray;
+}
+
+function squareToRC(sq) {
+    if (!sq || sq.length !== 2) return null;
+    const file = sq[0].toLowerCase();
+    const rank = parseInt(sq[1], 10);
+    if (!file.match(/[a-h]/) || isNaN(rank) || rank < 1 || rank > 8) return null;
+    const col = file.charCodeAt(0) - 97;
+    const row = 8 - rank;
+    return { r: row, c: col };
+}
+
+function setPiece(square, piece) {
+    const rc = squareToRC(square);
+    if (!rc) return;
+    getBoardArray()[rc.r][rc.c] = piece;
+}
+
+function removePiece(square) {
+    const rc = squareToRC(square);
+    if (!rc) return;
+    getBoardArray()[rc.r][rc.c] = null;
+}
+
+function inBounds(r,c) { return r >= 0 && r < 8 && c >= 0 && c < 8; }
+
+function isPathClear(fromR, fromC, toR, toC) {
+    const dr = Math.sign(toR - fromR);
+    const dc = Math.sign(toC - fromC);
+    let r = fromR + dr, c = fromC + dc;
+    while (r !== toR || c !== toC) {
+        if (!inBounds(r,c)) return false;
+        if (getBoardArray()[r][c] !== null) return false;
+        r += dr; c += dc;
+    }
+    return true;
+}
+
+function canPieceMoveBasic(pieceType, fromR, fromC, toR, toC, color) {
+    const dr = toR - fromR;
+    const dc = toC - fromC;
+    const absdr = Math.abs(dr);
+    const absdc = Math.abs(dc);
+    switch (pieceType.toUpperCase()) {
+        case 'P': {
+            // pawns: color 'w' moves up (row--), 'b' moves down (row++)
+            const dir = color === 'w' ? -1 : 1;
+            // capture
+            if (dr === dir && Math.abs(dc) === 1) return true;
+            // single step
+            if (dr === dir && dc === 0 && getBoardArray()[toR][toC] === null) return true;
+            // double step from starting rank
+            const startRow = color === 'w' ? 6 : 1;
+            if (fromR === startRow && dr === 2*dir && dc === 0) {
+                // must be clear path
+                const midR = fromR + dir;
+                if (getBoardArray()[midR][fromC] === null && getBoardArray()[toR][toC] === null) return true;
+            }
+            return false;
+        }
+        case 'N':
+            return (absdr === 1 && absdc === 2) || (absdr === 2 && absdc === 1);
+        case 'B':
+            if (absdr === absdc && absdr > 0) return isPathClear(fromR, fromC, toR, toC);
+            return false;
+        case 'R':
+            if ((absdr === 0 && absdc > 0) || (absdc === 0 && absdr > 0)) return isPathClear(fromR, fromC, toR, toC);
+            return false;
+        case 'Q':
+            if ((absdr === absdc && absdr > 0) || (absdr === 0 && absdc > 0) || (absdc === 0 && absdr > 0)) return isPathClear(fromR, fromC, toR, toC);
+            return false;
+        case 'K':
+            if (Math.max(absdr, absdc) === 1) return true;
+            // castling handled separately
+            return false;
+    }
+    return false;
+}
+
+function findCandidateSources(pieceLetter, color, toSquareStr) {
+    const res = [];
+    const to = squareToRC(toSquareStr);
+    if (!to) return res;
+    const pUpper = pieceLetter.toUpperCase();
+    const b = getBoardArray();
+    for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
+        const p = b[r][c];
+        if (!p) continue;
+        const pColor = isUpper(p) ? 'w' : 'b';
+        if (pColor !== color) continue;
+        if (p.toUpperCase() !== pUpper) continue;
+        // skip if destination has friendly piece
+        const destPiece = b[to.r][to.c];
+        if (destPiece && (isUpper(destPiece) ? 'w' : 'b') === color) continue;
+        if (canPieceMoveBasic(pUpper, r, c, to.r, to.c, color)) {
+            res.push({r,c});
+        }
+    }
+    return res;
+}
+
+function applyMoveSAN(moveRaw, color) {
+    if (!moveRaw) return false;
+    let move = moveRaw.trim();
+    // strip annotations and trailing + # ? ! (fixed: remove each annotation char)
+    move = move.replace(/[!?+#]/g, '');
+    if (move === '' ) return false;
+    // normalize 0-0 variants
+    if (/^0-0(-0)?$/i.test(move) || /^o-o(-o)?$/i.test(move)) move = move.replace(/0/g,'O');
+
+    // Castling
+    if (/^O-O-O$/i.test(move)) {
+        // long castle
+        if (color === 'w') {
+            // white: king e1 -> c1, rook a1 -> d1
+            setPiece('c1','K'); setPiece('d1','R'); removePiece('e1'); removePiece('a1');
+        } else {
+            setPiece('c8','k'); setPiece('d8','r'); removePiece('e8'); removePiece('a8');
+        }
+        return true;
+    }
+    if (/^O-O$/i.test(move)) {
+        // short castle
+        if (color === 'w') {
+            setPiece('g1','K'); setPiece('f1','R'); removePiece('e1'); removePiece('h1');
+        } else {
+            setPiece('g8','k'); setPiece('f8','r'); removePiece('e8'); removePiece('h8');
+        }
+        return true;
+    }
+
+    // Promotion syntax like e8=Q, e8Q, exd8=Q, exd8Q
+    const promoMatch = move.match(/^([a-h][18])=?([NBRQKnbrqk])?$/);
+    if (promoMatch) {
+        const dest = promoMatch[1].toLowerCase();
+        const prom = promoMatch[2] ? promoMatch[2].toUpperCase() : 'Q';
+        const colorPiece = color === 'w' ? prom.toUpperCase() : prom.toLowerCase();
+        const to = squareToRC(dest);
+        if (!to) return false;
+        const dir = color === 'w' ? -1 : 1;
+        const fromR = to.r - dir;
+        // Try possible from-files: same file (advance) or adjacent (capture)
+        for (let dc = -1; dc <= 1; dc++) {
+            const fc = to.c + dc;
+            if (!inBounds(fromR, fc)) continue;
+            const p = getBoardArray()[fromR][fc];
+            if (!p) continue;
+            if ((color === 'w' && p === 'P') || (color === 'b' && p === 'p')) {
+                // remove pawn and place promotion
+                removePiece(String.fromCharCode(97 + fc) + (8 - fromR));
+                removePiece(dest);
+                setPiece(dest, colorPiece);
+                return true;
+            }
+        }
+        // if not found, still place promotion on dest (best effort)
+        removePiece(dest);
+        setPiece(dest, colorPiece);
+        return true;
+    }
+
+    // Pawn capture, possibly with promotion handled above
+    const pawnCapture = move.match(/^([a-h])x([a-h][1-8])$/i);
+    if (pawnCapture) {
+        const fromFile = pawnCapture[1].toLowerCase();
+        const dest = pawnCapture[2].toLowerCase();
+        const to = squareToRC(dest);
+        if (!to) return false;
+        // find pawn on fromFile that can capture dest
+        const c = fromFile.charCodeAt(0) - 97;
+        for (let r = 0; r < 8; r++) {
+            const p = getBoardArray()[r][c];
+            if (!p) continue;
+            if ((color==='w' && p==='P') || (color==='b' && p==='p')) {
+                if (canPieceMoveBasic('P', r, c, to.r, to.c, color)) {
+                    // do capture
+                    removePiece(String.fromCharCode(97 + c) + (8 - r));
+                    removePiece(dest);
+                    setPiece(dest, color === 'w' ? 'P' : 'p');
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // pawn quiet move e4
+    const pawnMove = move.match(/^([a-h][1-8])$/i);
+    if (pawnMove) {
+        const dest = pawnMove[1].toLowerCase();
+        const to = squareToRC(dest);
+        if (!to) return false;
+        const colorPiece = color === 'w' ? 'P' : 'p';
+        const candidates = [];
+        for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
+            const p = getBoardArray()[r][c];
+            if (!p) continue;
+            if ((color==='w' && p==='P') || (color==='b' && p==='p')) {
+                if (canPieceMoveBasic('P', r, c, to.r, to.c, color)) candidates.push({r,c});
+            }
+        }
+        if (candidates.length === 1) {
+            const fr = candidates[0].r, fc = candidates[0].c;
+            removePiece(String.fromCharCode(97 + fc) + (8 - fr));
+            setPiece(dest, colorPiece);
+            return true;
+        }
+        if (candidates.length > 0) {
+            const chosen = candidates[0];
+            removePiece(String.fromCharCode(97 + chosen.c) + (8 - chosen.r));
+            setPiece(dest, colorPiece);
+            return true;
+        }
+        return false;
+    }
+
+    // Piece move
+    const pieceMoveMatch = move.match(/^([NBRQK])([a-h1-8]?)([a-h1-8]?)(x?)([a-h][1-8])(?:=?([NBRQK]))?$/i);
+    if (pieceMoveMatch) {
+        const pieceLetter = pieceMoveMatch[1].toUpperCase();
+        const dis1 = pieceMoveMatch[2] || '';
+        const dis2 = pieceMoveMatch[3] || '';
+        const dest = pieceMoveMatch[5].toLowerCase();
+        let candidates = findCandidateSources(pieceLetter, color, dest);
+        // apply disambiguation
+        if (dis1) {
+            candidates = candidates.filter(p => {
+                const file = String.fromCharCode(97 + p.c);
+                const rank = (8 - p.r).toString();
+                return file === dis1 || rank === dis1;
+            });
+        }
+        if (dis2) {
+            candidates = candidates.filter(p => {
+                const file = String.fromCharCode(97 + p.c);
+                const rank = (8 - p.r).toString();
+                return file === dis2 || rank === dis2;
+            });
+        }
+        if (candidates.length === 0) return false;
+        const chosen = candidates[0];
+        const fromSq = String.fromCharCode(97 + chosen.c) + (8 - chosen.r);
+        // perform move
+        removePiece(fromSq);
+        removePiece(dest);
+        const placed = (color === 'w') ? pieceLetter.toUpperCase() : pieceLetter.toLowerCase();
+        setPiece(dest, placed);
+        return true;
+    }
+
+    // Fallback: unrecognized move
+    return false;
+}
+
+// ==========================
+// Board syncing from chess.com move list
+// ==========================
+// Expose for debug/testing
+window.getChessBoardArray = getBoardArray;
+window.updateChessBoardFromDom = updateBoardFromDom;
+window.applyMoveSAN = applyMoveSAN;
+// start observing when the script loads (if DOM present)
+setTimeout(observeMoveList, 500);
