@@ -145,7 +145,7 @@ function handleVoiceCommand(text) {
     if (matches.length === 1) {
         pendingMove = matches[0];
         isAwaitingConfirmation = true;
-        speak(`Move to ${parsed.targetSquare}? Say yes or no.`);
+        speak(`Move to ${getPieceName(parsed.piece)} ${parsed.targetSquare}? Say yes or no.`);
     } else if (matches.length > 1) {
         speak("Multiple pieces can move there. Please specify which one.");
     } else {
@@ -304,4 +304,26 @@ function parseVoiceMove(text) {
     else if (condensed.includes("king")) piece = "K";
 
     return { piece, targetSquare };
+}
+
+/**
+ * Converts chess shorthand (N, B, R, Q, K) to full names.
+ * @param {string} symbol - The piece symbol (e.g., 'n', 'N', 'b', or '')
+ * @returns {string} The full piece name.
+ */
+function getPieceName(symbol) {
+    // 1. Clean the input: lowercase it and take just the first character
+    const char = symbol ? symbol.toLowerCase().trim().charAt(0) : 'p';
+
+    const pieceMap = {
+        'n': 'knight',
+        'b': 'bishop',
+        'r': 'rook',
+        'q': 'queen',
+        'k': 'king',
+        'p': 'pawn'
+    };
+
+    // 2. Return the name, defaulting to 'pawn' if the symbol is empty or unknown
+    return pieceMap[char] || 'pawn';
 }
