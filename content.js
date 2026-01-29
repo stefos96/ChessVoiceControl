@@ -301,6 +301,206 @@ function parseChessCommand(text) {
     return null;
 }
 
+// Parse phrases like "king to e1", "bishop takes e3", "knight f3" -> { piece: 'king', dest: 'e1' }
+function parsePieceAndDestFromNormalized(normText) {
+    if (!normText) return null;
+    const s = normText.toLowerCase().trim();
+    // look for patterns: piece [takes|x|to]? square
+    const m = s.match(/\b(king|queen|rook|bishop|knight|pawn|k|q|r|b|n|p)\b(?:\s*(?:to|x|takes|take|captures|capture)\s*)?([a-h][1-8])/i);
+    if (m) {
+        let piece = m[1].toLowerCase();
+        // normalize single-letter forms
+        if (piece.length === 1) {
+            const map = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight', p: 'pawn' };
+            piece = map[piece] || piece;
+        }
+        const dest = m[2] ? m[2].toLowerCase() : null;
+        if (dest) return { piece, dest };
+    }
+    return null;
+}
+
+// Heuristic: try to determine the piece letter (PNBRQK) for a square DOM element's contents
+function guessPieceLetterFromSquareElement(squareEl) {
+    if (!squareEl) return null;
+    const html = (squareEl.innerHTML || '').toLowerCase();
+    const classNames = (squareEl.className || '').toLowerCase();
+
+    // Common chess.com piece image alt/text patterns
+    if (html.indexOf('king') !== -1 || classNames.indexOf('king') !== -1 || html.indexOf('wk') !== -1 || html.indexOf('bk') !== -1) return 'K';
+    if (html.indexOf('queen') !== -1 || classNames.indexOf('queen') !== -1 || html.indexOf('wq') !== -1 || html.indexOf('bq') !== -1) return 'Q';
+    if (html.indexOf('rook') !== -1 || classNames.indexOf('rook') !== -1 || html.indexOf('wr') !== -1 || html.indexOf('br') !== -1) return 'R';
+    if (html.indexOf('bishop') !== -1 || classNames.indexOf('bishop') !== -1 || html.indexOf('wb') !== -1 || html.indexOf('bb') !== -1) return 'B';
+    if (html.indexOf('knight') !== -1 || classNames.indexOf('knight') !== -1 || html.indexOf('wn') !== -1 || html.indexOf('bn') !== -1 || html.indexOf('horse') !== -1) return 'N';
+    if (html.indexOf('pawn') !== -1 || classNames.indexOf('pawn') !== -1 || html.indexOf('wp') !== -1 || html.indexOf('bp') !== -1) return 'P';
+
+    // fallback: look for common single-letter classes like 'wp', 'bp'
+    if (/\bwp\b/.test(classNames) || /\bwp\b/.test(html)) return 'P';
+    if (/\bbp\b/.test(classNames) || /\bbp\b/.test(html)) return 'P';
+
+    return null;
+}
+
+function isUpper(ch) {
+    // Return true when the given piece character appears uppercase (white piece)
+    if (!ch || typeof ch !== 'string') return false;
+    const c = ch.charAt(0);
+    return /^[A-Z]$/.test(c);
+}
+
+// Attempt to play a move where the user specified a piece and destination (e.g. "king to e1").
+// This narrows candidate from-squares to only those that contain that piece type.
+async function playPieceToSquare(pieceName, dest) {
+    if (!pieceName || !dest || dest.length !== 2) return false;
+
+    const pieceLetterMap = { king: 'K', queen: 'Q', rook: 'R', bishop: 'B', knight: 'N', pawn: 'P' };
+    const wanted = (pieceLetterMap[pieceName.toLowerCase()] || null);
+    if (!wanted) return false;
+
+    const squares = Array.from(document.querySelectorAll('[data-square]'));
+    // Build a list of candidate source squares using our boardArray logic first
+    const candidates = [];
+    try {
+        // try both colors; prefer white then black (no reliable turn detection here)
+        const w = findCandidateSources(wanted, 'w', dest).map(p => String.fromCharCode(97 + p.c) + (8 - p.r));
+        const b = findCandidateSources(wanted, 'b', dest).map(p => String.fromCharCode(97 + p.c) + (8 - p.r));
+        // prefer white candidates if any (common case when user is white), else include black
+        if (w.length) candidates.push(...w);
+        if (b.length) candidates.push(...b);
+    } catch (e) { /* ignore */ }
+
+    // If board DOM squares exist, map candidates to elements
+    const squareMap = new Map(squares.map(s => [s.getAttribute('data-square'), s]));
+    let candidateEls = candidates.map(sq => squareMap.get(sq)).filter(Boolean);
+
+    // If we didn't find candidates via boardArray or no DOM squares, try heuristic DOM/guessing
+    if (candidateEls.length === 0 && squares.length > 0) {
+        // fall back to scanning DOM for elements that appear to contain the requested piece
+        candidateEls = squares.filter(s => s.getAttribute('data-square') !== dest && s.innerHTML.trim() !== '' && (function() {
+            const sq = s.getAttribute('data-square');
+            const ch = getPieceCharAt(sq);
+            if (ch && ch.toUpperCase() === wanted) return true;
+            const guessed = guessPieceLetterFromSquareElement(s);
+            return guessed === wanted;
+        })());
+    }
+
+    // Helper to observe broad board changes
+    let boardRoot = document.body;
+    if (squares.length) boardRoot = squares[0].closest('[data-board]') || squares[0].parentElement || document.body;
+    function waitForBoardChange(before, timeout = 1200) {
+        return new Promise((resolve) => {
+            if (boardRoot.innerHTML !== before) return resolve(true);
+            const obs = new MutationObserver(() => {
+                if (boardRoot.innerHTML !== before) {
+                    obs.disconnect();
+                    resolve(true);
+                }
+            });
+            obs.observe(boardRoot, { childList: true, subtree: true, characterData: true });
+            setTimeout(() => { obs.disconnect(); resolve(false); }, timeout);
+        });
+    }
+
+    // If we have DOM square elements to click, try them
+    if (candidateEls.length > 0) {
+        const destEl = squareMap.get(dest);
+        if (!destEl) {
+            // If destination element not found, fall back to canvas approach below
+            candidateEls = [];
+        } else {
+            for (const fromEl of candidateEls) {
+                const prev = boardRoot.innerHTML;
+                try {
+                    ['mousedown','mouseup','click'].forEach(evtType => {
+                        fromEl.dispatchEvent(new MouseEvent(evtType, { bubbles:true, cancelable:true }));
+                        destEl.dispatchEvent(new MouseEvent(evtType, { bubbles:true, cancelable:true }));
+                    });
+                } catch (e) { console.warn('Dispatch failed for', fromEl, destEl, e); }
+                const changed = await waitForBoardChange(prev, 1200);
+                if (changed) {
+                    const nowContent = destEl.innerHTML.trim();
+                    const beforeContent = (() => { try { const parser = new DOMParser(); const doc = parser.parseFromString(prev, 'text/html'); const prev = doc.querySelector(`[data-square="${dest}"]`); return prev ? prev.innerHTML.trim() : ''; } catch (e) { return ''; } })();
+                    if (nowContent && nowContent !== beforeContent) {
+                        console.log('Piece move to', dest, 'succeeded from', fromEl.getAttribute('data-square'));
+                        return true;
+                    }
+                    if (nowContent) return true; // heuristic
+                }
+            }
+        }
+    }
+
+    // If we reach here, try canvas-based simulation using candidates (or all occupied squares if none)
+    const canvases = Array.from(document.querySelectorAll('canvas'));
+    if (canvases.length === 0) {
+        console.warn('No canvas board found and DOM attempts failed for piece move to', dest);
+        return false;
+    }
+    // If we have explicit candidate square strings, use them; else try all occupied squares
+    let candidateSquares = candidates.slice();
+    if (candidateSquares.length === 0) {
+        const sqs = Array.from(document.querySelectorAll('[data-square]'));
+        candidateSquares = sqs.filter(s => s.getAttribute('data-square') !== dest && s.innerHTML.trim() !== '').map(s => s.getAttribute('data-square'));
+    }
+    // If still empty, try all boardArray squares with matching piece
+    if (candidateSquares.length === 0) {
+        try {
+            const b = getBoardArray();
+            for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
+                const p = b[r][c];
+                if (!p) continue;
+                if (p.toUpperCase() === wanted) candidateSquares.push(String.fromCharCode(97 + c) + (8 - r));
+            }
+        } catch (e) {}
+    }
+
+    // Try simulateCanvasMove from each candidate
+    for (const fromSq of candidateSquares) {
+        const prev = boardRoot.innerHTML;
+
+        console.log('Canvas piece move to', dest, 'attempted from', fromSq);
+
+        playMoveOnChessDotCom(fromSq + dest);
+        // try {
+        //     // pick largest canvas as simulateCanvasMove does
+        //     let board = canvases[0];
+        //     try { let maxArea = 0; for (const c of canvases) { const r = c.getBoundingClientRect(); const area = (r.width||0)*(r.height||0); if (area>maxArea) { maxArea=area; board=c; } } } catch(e) { board = canvases[0]; }
+        //     const start = squareToCanvasXY(fromSq, board, 'white');
+        //     const end = squareToCanvasXY(dest, board, 'white');
+        //     const opts = (type,x,y) => new PointerEvent(type, { bubbles:true, cancelable:true, pointerType:'mouse', clientX:x, clientY:y, buttons:1 });
+        //     board.dispatchEvent(opts('pointerdown', start.x, start.y));
+        //     await new Promise(r => setTimeout(r, 80));
+        //     board.dispatchEvent(opts('pointermove', end.x, end.y));
+        //     board.dispatchEvent(opts('pointerup', end.x, end.y));
+        // } catch (e) { console.warn('Canvas dispatch failed for', fromSq, dest, e); }
+        const changed = await waitForBoardChange(prev, 1200);
+        if (changed) {
+            console.log('Canvas piece move to', dest, 'attempted from', fromSq);
+            return true;
+        }
+    }
+
+    console.warn('Unable to play piece move to', dest);
+    return false;
+}
+
+function logMoveDescription(fromSq, toSq, movingPieceChar, capturedPieceChar, promotion, color) {
+    const mover = movingPieceChar ? pieceFullNameChar(movingPieceChar) : 'Pawn';
+    const cap = capturedPieceChar ? pieceFullNameChar(capturedPieceChar) : null;
+    const whoColor = color === 'w' ? 'White' : 'Black';
+    let msg = `${whoColor} ${mover}`;
+    if (fromSq) msg += ` from ${fromSq}`;
+    msg += ` to ${toSq}`;
+    if (cap) msg += ` capturing ${cap}`;
+    if (promotion) {
+        const promName = pieceFullNameChar(promotion);
+        msg += ` and promotes to ${promName}`;
+    }
+    console.log(msg);
+}
+
+
 // Simulate move on chess.com board
 function playMoveOnChessDotCom(move) {
     if (!move || move.length !== 4) return;
@@ -379,94 +579,6 @@ function squareToCanvasXY(square, canvas, orientation = "white") {
     }
 
     return { x, y };
-}
-
-
-// Attempt to play a destination-only move (e.g. 'e4') by trying all candidate from-squares.
-// Uses a MutationObserver to detect board changes after each attempt.
-async function playDestinationOnChessDotCom(dest) {
-    if (!dest || dest.length !== 2) return false;
-
-    const squares = Array.from(document.querySelectorAll('[data-square]'));
-    if (!squares.length) {
-        console.warn('No board squares found');
-        return false;
-    }
-
-    const squareMap = new Map(squares.map(s => [s.getAttribute('data-square'), s]));
-    const destEl = squareMap.get(dest);
-    if (!destEl) {
-        console.warn('Destination square not found:', dest);
-        return false;
-    }
-
-    // Find board root to observe changes; prefer a container that encloses squares
-    let boardRoot = squares[0].closest('[data-board]') || squares[0].parentElement;
-    if (!boardRoot) boardRoot = document.body;
-
-    // Candidate from squares: those that currently contain something and are not the destination
-    const candidateFrom = squares.filter(s => s.getAttribute('data-square') !== dest && s.innerHTML.trim() !== '');
-
-    // Helper: wait for board change compared to 'before' or timeout
-    function waitForBoardChange(before, timeout = 1000) {
-        return new Promise((resolve) => {
-            if (boardRoot.innerHTML !== before) return resolve(true);
-            const obs = new MutationObserver(() => {
-                if (boardRoot.innerHTML !== before) {
-                    obs.disconnect();
-                    resolve(true);
-                }
-            });
-            obs.observe(boardRoot, { childList: true, subtree: true, characterData: true });
-            setTimeout(() => { obs.disconnect(); resolve(false); }, timeout);
-        });
-    }
-
-    for (const fromEl of candidateFrom) {
-        const prevSnapshot = boardRoot.innerHTML;
-
-        // Try clicking from -> to (same sequence as playMoveOnChessDotCom)
-        try {
-            ['mousedown','mouseup','click'].forEach(evtType => {
-                fromEl.dispatchEvent(new MouseEvent(evtType, { bubbles:true, cancelable:true }));
-                destEl.dispatchEvent(new MouseEvent(evtType, { bubbles:true, cancelable:true }));
-            });
-        } catch (e) {
-            console.warn('Dispatch failed for', fromEl, destEl, e);
-        }
-
-        const changed = await waitForBoardChange(prevSnapshot, 1000);
-        if (changed) {
-            // Check if dest now contains a piece (non-empty) and differs from before
-            const nowContent = destEl.innerHTML.trim();
-            const beforeContent = (() => {
-                // try to extract previous dest content from prevSnapshot string
-                try {
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(prevSnapshot, 'text/html');
-                    const prev = doc.querySelector(`[data-square="${dest}"]`);
-                    return prev ? prev.innerHTML.trim() : '';
-                } catch (e) { return ''; }
-            })();
-
-            if (nowContent && nowContent !== beforeContent) {
-                console.log('Move to', dest, 'succeeded from candidate', fromEl.getAttribute('data-square'));
-                return true;
-            }
-
-            // Some boards update in a different way; as a heuristic, consider any change a success
-            // if the destination contains anything now.
-            if (nowContent) {
-                console.log('Move to', dest, 'likely succeeded (heuristic)');
-                return true;
-            }
-        }
-
-        // else continue trying other pieces
-    }
-
-    console.warn('Unable to play destination move:', dest);
-    return false;
 }
 
 // ==========================
@@ -741,7 +853,24 @@ function handlePageMessage(event) {
                     // playMoveOnChessDotCom will resume listening afterwards
                 } else if (typeof move === 'string' && move.length === 2) {
                     // destination-only like 'e4' -> try to find source and play
-                    playDestinationOnChessDotCom(move).then(success => { if (success) resetInput(); }).catch(e => console.error(e));
+                    // But first check if the user mentioned a piece (e.g. 'king to e1') and prefer narrower attempt
+                    const pieceSpec = parsePieceAndDestFromNormalized(normalized);
+                    console.log('Attempting destination move to', move, 'with piece spec', pieceSpec);
+
+                    if (pieceSpec && pieceSpec.dest === move) {
+                        // playMoveOnChessDotCom(move);
+
+                        playPieceToSquare(pieceSpec.piece, move).then(success => {
+                            if (success) resetInput();
+                            else {
+                                playMoveOnChessDotCom(move);
+                                resetInput();
+                            }
+                        }).catch(e => { console.error(e); });
+                    } else {
+                        playMoveOnChessDotCom(move);
+                        resetInput();
+                    }
                 } else {
                     // Not a 4-char or 2-char move (e.g. "castle kingside") - do not auto-play these; display notation for user awareness
                 }
@@ -816,6 +945,9 @@ window.addEventListener('voiceChessStop', () => {
 // board[row][col] where row 0 = rank 8, row 7 = rank 1; col 0 = file a, col 7 = file h
 let boardArray = null;
 
+// Add lightweight game state to track lastMove for en-passant detection
+let gameState = { lastMove: null };
+
 function createEmptyBoard() {
     const b = [];
     for (let r = 0; r < 8; r++) {
@@ -834,6 +966,8 @@ function initStartingBoard() {
     const backW = ['R','N','B','Q','K','B','N','R'];
     for (let c = 0; c < 8; c++) b[7][c] = backW[c]; // white back rank
     boardArray = b;
+    // reset transient game state (important for en-passant tracking)
+    try { gameState.lastMove = null; } catch (e) { /* ignore */ }
     return b;
 }
 
@@ -887,8 +1021,23 @@ function canPieceMoveBasic(pieceType, fromR, fromC, toR, toC, color) {
         case 'P': {
             // pawns: color 'w' moves up (row--), 'b' moves down (row++)
             const dir = color === 'w' ? -1 : 1;
-            // capture
-            if (dr === dir && Math.abs(dc) === 1) return true;
+            // capture (diagonal)
+            if (dr === dir && Math.abs(dc) === 1) {
+                const destPiece = getBoardArray()[toR][toC];
+                // normal capture: destination must contain opponent piece
+                if (destPiece) return true;
+                // en-passant: destination empty but last move was a double pawn push to the adjacent square
+                if (typeof gameState !== 'undefined' && gameState.lastMove && gameState.lastMove.wasDoublePawnPush) {
+                    const lastTo = gameState.lastMove.to;
+                    const lastRC = squareToRC(lastTo);
+                    if (lastRC && lastRC.c === toC) {
+                        // for white capturing en-passant, captured pawn is on row = toR + 1
+                        const expectedCapRow = color === 'w' ? toR + 1 : toR - 1;
+                        if (lastRC.r === expectedCapRow) return true;
+                    }
+                }
+                return false;
+            }
             // single step
             if (dr === dir && dc === 0 && getBoardArray()[toR][toC] === null) return true;
             // double step from starting rank
@@ -961,175 +1110,244 @@ function getPieceCharAt(square) {
     return getBoardArray()[rc.r][rc.c];
 }
 
-function logMoveDescription(fromSq, toSq, movingPieceChar, capturedPieceChar, promotion, color) {
-    const mover = movingPieceChar ? pieceFullNameChar(movingPieceChar) : 'Pawn';
-    const cap = capturedPieceChar ? pieceFullNameChar(capturedPieceChar) : null;
-    const whoColor = color === 'w' ? 'White' : 'Black';
-    let msg = `${whoColor} ${mover}`;
-    if (fromSq) msg += ` from ${fromSq}`;
-    msg += ` to ${toSq}`;
-    if (cap) msg += ` capturing ${cap}`;
-    if (promotion) {
-        const promName = pieceFullNameChar(promotion);
-        msg += ` and promotes to ${promName}`;
+// Debug: print our internal board array in a readable format (rank 8 -> 1)
+function printBoardArray() {
+    try {
+        const b = getBoardArray();
+        console.log('--- Internal boardArray (row0 = rank8 -> row7 = rank1) ---');
+        for (let r = 0; r < 8; r++) {
+            const rank = 8 - r;
+            const row = b[r].map(s => s === null ? '.' : s).join(' ');
+            console.log(rank + ': ' + row);
+        }
+        console.log('-----------------------------------------------');
+    } catch (e) {
+        console.warn('printBoardArray failed:', e);
     }
-    console.log(msg);
 }
 
-// Replace applyMoveSAN with logging-aware version
+// Replace applyMoveSAN with improved parser and applier
+function rcToSquare(r, c) {
+    return String.fromCharCode(97 + c) + (8 - r);
+}
+
 function applyMoveSAN(moveRaw, color) {
     if (!moveRaw) return false;
-    let move = moveRaw.trim();
-    // strip annotations and trailing + # ? !
-    move = move.replace(/[!?+#]/g, '');
-    if (move === '' ) return false;
-    // normalize 0-0 variants
-    if (/^0-0(-0)?$/i.test(move) || /^o-o(-o)?$/i.test(move)) move = move.replace(/0/g,'O');
+    let move = String(moveRaw).trim();
+    // strip annotations, NAGs, comments and check/mate symbols
+    move = move.replace(/{.*?}|\(.*?\)|\$\d+/g, ''); // remove comments and NAGs
+    move = move.replace(/[!?+#]+/g, ''); // remove annotation symbols
+    move = move.replace(/^\s+|\s+$/g, '');
+    if (move === '') return false;
+    // normalize zeros to letter O for castling
+    move = move.replace(/0/g, 'O');
 
-    // Castling
-    if (/^O-O-O$/i.test(move)) {
+    // helper: get board and rc conversion
+    const b = getBoardArray();
+
+    // CASTLING
+    if (/^O-O-O$/i.test(move) || /^O-O-O$/.test(move)) {
         if (color === 'w') {
-            // log
-            console.log('White castles long: King e1 -> c1, Rook a1 -> d1');
-            setPiece('c1','K'); setPiece('d1','R'); removePiece('e1'); removePiece('a1');
+            // white long
+            logMoveDescription('e1', 'c1', 'K', null, null, color);
+            removePiece('e1'); removePiece('a1');
+            setPiece('c1', 'K'); setPiece('d1', 'R');
         } else {
-            console.log('Black castles long: King e8 -> c8, Rook a8 -> d8');
-            setPiece('c8','k'); setPiece('d8','r'); removePiece('e8'); removePiece('a8');
+            logMoveDescription('e8', 'c8', 'k', null, null, color);
+            removePiece('e8'); removePiece('a8');
+            setPiece('c8', 'k'); setPiece('d8', 'r');
         }
+        // update lastMove
+        gameState.lastMove = { from: null, to: null, piece: 'K', color, wasDoublePawnPush: false };
         return true;
     }
-    if (/^O-O$/i.test(move)) {
+    if (/^O-O$/i.test(move) || /^O-O$/.test(move)) {
         if (color === 'w') {
-            console.log('White castles short: King e1 -> g1, Rook h1 -> f1');
-            setPiece('g1','K'); setPiece('f1','R'); removePiece('e1'); removePiece('h1');
+            logMoveDescription('e1', 'g1', 'K', null, null, color);
+            removePiece('e1'); removePiece('h1');
+            setPiece('g1', 'K'); setPiece('f1', 'R');
         } else {
-            console.log('Black castles short: King e8 -> g8, Rook h8 -> f8');
-            setPiece('g8','k'); setPiece('f8','r'); removePiece('e8'); removePiece('h8');
+            logMoveDescription('e8', 'g8', 'k', null, null, color);
+            removePiece('e8'); removePiece('h8');
+            setPiece('g8', 'k'); setPiece('f8', 'r');
         }
+        gameState.lastMove = { from: null, to: null, piece: 'K', color, wasDoublePawnPush: false };
         return true;
     }
 
-    // Promotion syntax like e8=Q, e8Q, exd8=Q, exd8Q
-    const promoMatch = move.match(/^([a-h][18])=?([NBRQKnbrqk])?$/);
+    // PROMOTION (with optional capture)
+    // Examples: e8=Q, e8Q, exd8=Q, exd8Q
+    const promoMatch = move.match(/^(?:([a-h])x)?([a-h][18])=?([NBRQnbrq])?$/i);
     if (promoMatch) {
-        const dest = promoMatch[1].toLowerCase();
-        const prom = promoMatch[2] ? promoMatch[2].toUpperCase() : 'Q';
-        const colorPiece = color === 'w' ? prom.toUpperCase() : prom.toLowerCase();
-        const to = squareToRC(dest);
-        if (!to) return false;
-        const dir = color === 'w' ? -1 : 1;
-        const fromR = to.r - dir;
-        // Try possible from-files: same file (advance) or adjacent (capture)
-        for (let dc = -1; dc <= 1; dc++) {
-            const fc = to.c + dc;
-            if (!inBounds(fromR, fc)) continue;
-            const p = getBoardArray()[fromR][fc];
-            if (!p) continue;
-            if ((color === 'w' && p === 'P') || (color === 'b' && p === 'p')) {
-                const fromSq = String.fromCharCode(97 + fc) + (8 - fromR);
-                const capturedChar = getPieceCharAt(dest);
-                logMoveDescription(fromSq, dest, 'P', capturedChar, prom, color);
-                removePiece(fromSq);
-                removePiece(dest);
-                setPiece(dest, colorPiece);
-                return true;
+        // handle both capture-promotions and quiet promotions
+        let fromFile = null;
+        let dest = null;
+        let prom = null;
+        if (promoMatch.length === 4) {
+            // either ([a-h])x dest prom or dest prom
+            if (/^[a-h]x/i.test(move)) {
+                fromFile = promoMatch[1] ? promoMatch[1].toLowerCase() : null;
+                dest = promoMatch[2].toLowerCase();
+                prom = promoMatch[3] ? promoMatch[3].toUpperCase() : null;
+            } else {
+                dest = promoMatch[1].toLowerCase();
+                prom = promoMatch[2] ? promoMatch[2].toUpperCase() : null;
+            }
+        } else if (promoMatch.length === 3) {
+            dest = promoMatch[1].toLowerCase();
+            prom = promoMatch[2] ? promoMatch[2].toUpperCase() : null;
+        }
+        if (!dest) return false;
+        const toRC = squareToRC(dest);
+        if (!toRC) return false;
+        // find candidate pawns that can promote to dest
+        let candidates = findCandidateSources('P', color, dest);
+        if (fromFile) candidates = candidates.filter(p => String.fromCharCode(97 + p.c) === fromFile);
+        if (candidates.length === 0) return false;
+        const chosen = candidates[0];
+        const fromSq = rcToSquare(chosen.r, chosen.c);
+        // default promotion to Queen if unspecified
+        prom = prom || 'Q';
+        const promotedChar = (color === 'w') ? prom.toUpperCase() : prom.toLowerCase();
+        logMoveDescription(fromSq, dest, 'P', getPieceCharAt(dest), prom, color);
+        removePiece(fromSq);
+        removePiece(dest);
+        setPiece(dest, promotedChar);
+        // update lastMove (promotion is not a double pawn push)
+        gameState.lastMove = { from: fromSq, to: dest, piece: prom, color, wasDoublePawnPush: false };
+        return true;
+    }
+
+    // PAWN CAPTURE (including possible en-passant)
+    const pawnCap = move.match(/^([a-h])x([a-h][1-8])$/i);
+    if (pawnCap) {
+        const fromFile = pawnCap[1].toLowerCase();
+        const dest = pawnCap[2].toLowerCase();
+        const toRC = squareToRC(dest);
+        if (!toRC) return false;
+        // find pawn candidates on fromFile that can move to dest
+        let candidates = findCandidateSources('P', color, dest).filter(p => String.fromCharCode(97 + p.c) === fromFile);
+        if (candidates.length === 0) {
+            // maybe en-passant: pawn can capture to empty square if last move was double pawn push
+            // scan for pawn at fromFile that can move diagonally to dest
+            for (let r = 0; r < 8; r++) {
+                const p = b[r][fromFile.charCodeAt(0) - 97];
+                if (!p) continue;
+                if ((color === 'w' && p === 'P') || (color === 'b' && p === 'p')) {
+                    if (canPieceMoveBasic('P', r, fromFile.charCodeAt(0) - 97, toRC.r, toRC.c, color)) {
+                        candidates.push({ r, c: fromFile.charCodeAt(0) - 97 });
+                    }
+                }
             }
         }
-        // if not found, still place promotion on dest (best effort)
-        const capturedChar = getPieceCharAt(dest);
-        logMoveDescription(null, dest, 'P', capturedChar, prom, color);
-        removePiece(dest);
-        setPiece(dest, colorPiece);
-        return true;
-    }
+        if (candidates.length === 0) return false;
+        const chosen = candidates[0];
+        const fromSq = rcToSquare(chosen.r, chosen.c);
 
-    // Pawn capture, possibly with promotion handled above
-    const pawnCapture = move.match(/^([a-h])x([a-h][1-8])$/i);
-    if (pawnCapture) {
-        const fromFile = pawnCapture[1].toLowerCase();
-        const dest = pawnCapture[2].toLowerCase();
-        const to = squareToRC(dest);
-        if (!to) return false;
-        // find pawn on fromFile that can capture dest
-        const c = fromFile.charCodeAt(0) - 97;
-        for (let r = 0; r < 8; r++) {
-            const p = getBoardArray()[r][c];
-            if (!p) continue;
-            if ((color==='w' && p==='P') || (color==='b' && p==='p')) {
-                if (canPieceMoveBasic('P', r, c, to.r, to.c, color)) {
-                    const fromSq = String.fromCharCode(97 + c) + (8 - r);
-                    const capturedChar = getPieceCharAt(dest);
-                    logMoveDescription(fromSq, dest, 'P', capturedChar, null, color);
+        const destPiece = getPieceCharAt(dest);
+        if (destPiece) {
+            // normal capture
+            logMoveDescription(fromSq, dest, 'P', destPiece, null, color);
+            removePiece(fromSq);
+            removePiece(dest);
+            setPiece(dest, color === 'w' ? 'P' : 'p');
+            gameState.lastMove = { from: fromSq, to: dest, piece: 'P', color, wasDoublePawnPush: false };
+            return true;
+        }
+
+        // If destination empty, check en-passant capture
+        if (gameState.lastMove && gameState.lastMove.wasDoublePawnPush) {
+            const lastTo = gameState.lastMove.to; // square string like 'd5'
+            const lastRC = squareToRC(lastTo);
+            if (lastRC && lastRC.c === toRC.c) {
+                // verify the captured pawn is adjacent and on the correct row
+                // for white capturing en-passant, captured pawn must be on row = to.r + 1
+                const expectedCapRow = color === 'w' ? toRC.r + 1 : toRC.r - 1;
+                if (lastRC.r === expectedCapRow) {
+                    const capturedSquare = lastTo;
+                    logMoveDescription(fromSq, dest, 'P', getPieceCharAt(capturedSquare), null, color);
                     removePiece(fromSq);
-                    removePiece(dest);
+                    removePiece(capturedSquare);
                     setPiece(dest, color === 'w' ? 'P' : 'p');
+                    gameState.lastMove = { from: fromSq, to: dest, piece: 'P', color, wasDoublePawnPush: false };
                     return true;
                 }
             }
         }
+
         return false;
     }
 
-    // pawn quiet move e4
-    const pawnMove = move.match(/^([a-h][1-8])$/i);
-    if (pawnMove) {
-        const dest = pawnMove[1].toLowerCase();
-        const to = squareToRC(dest);
-        if (!to) return false;
-        const colorPiece = color === 'w' ? 'P' : 'p';
-        const candidates = [];
-        for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
-            const p = getBoardArray()[r][c];
-            if (!p) continue;
-            if ((color==='w' && p==='P') || (color==='b' && p==='p')) {
-                if (canPieceMoveBasic('P', r, c, to.r, to.c, color)) candidates.push({r,c});
-            }
-        }
-        if (candidates.length === 1) {
-            const fr = candidates[0].r, fc = candidates[0].c;
-            const fromSq = String.fromCharCode(97 + fc) + (8 - fr);
-            logMoveDescription(fromSq, dest, 'P', getPieceCharAt(dest), null, color);
-            removePiece(fromSq);
-            setPiece(dest, colorPiece);
-            return true;
-        }
-        if (candidates.length > 0) {
-            const chosen = candidates[0];
-            const fromSq = String.fromCharCode(97 + chosen.c) + (8 - chosen.r);
-            logMoveDescription(fromSq, dest, 'P', getPieceCharAt(dest), null, color);
-            removePiece(fromSq);
-            setPiece(dest, colorPiece);
-            return true;
-        }
-        return false;
-    }
-
-    // Piece move
-    const pieceMoveMatch = move.match(/^([NBRQK])([a-h1-8]?)([a-h1-8]?)(x?)([a-h][1-8])(?:=?([NBRQK]))?$/i);
-    if (pieceMoveMatch) {
-        const pieceLetter = pieceMoveMatch[1].toUpperCase();
-        const dis1 = pieceMoveMatch[2] || '';
-        const dis2 = pieceMoveMatch[3] || '';
-        const dest = pieceMoveMatch[5].toLowerCase();
-        let candidates = findCandidateSources(pieceLetter, color, dest);
-        // apply disambiguation
-        if (dis1) {
-            candidates = candidates.filter(p => {
-                const file = String.fromCharCode(97 + p.c);
-                const rank = (8 - p.r).toString();
-                return file === dis1 || rank === dis1;
-            });
-        }
-        if (dis2) {
-            candidates = candidates.filter(p => {
-                const file = String.fromCharCode(97 + p.c);
-                const rank = (8 - p.r).toString();
-                return file === dis2 || rank === dis2;
-            });
-        }
+    // PAWN QUIET MOVE (e.g. e4)
+    const pawnQuiet = move.match(/^([a-h][1-8])$/i);
+    if (pawnQuiet) {
+        const dest = pawnQuiet[1].toLowerCase();
+        const toRC = squareToRC(dest);
+        if (!toRC) return false;
+        // find pawn candidates that can move to dest (single or double)
+        let candidates = findCandidateSources('P', color, dest);
         if (candidates.length === 0) return false;
+        // prefer single-step candidate if multiple: choose the one with correct starting row bias
+        let chosen = null;
+        if (candidates.length === 1) chosen = candidates[0];
+        else {
+            // attempt to pick pawn that is on the immediate source square for single move
+            for (const c of candidates) {
+                const dr = toRC.r - c.r;
+                const dir = color === 'w' ? -1 : 1;
+                if (dr === dir) { chosen = c; break; }
+            }
+            if (!chosen) chosen = candidates[0];
+        }
+        const fromSq = rcToSquare(chosen.r, chosen.c);
+
+        const capturedChar = getPieceCharAt(dest);
+        logMoveDescription(fromSq, dest, 'P', capturedChar, null, color);
+        removePiece(fromSq);
+        setPiece(dest, color === 'w' ? 'P' : 'p');
+        // record last move if it was a double-step
+        const wasDouble = Math.abs(chosen.r - toRC.r) === 2;
+        gameState.lastMove = { from: fromSq, to: dest, piece: 'P', color, wasDoublePawnPush: wasDouble };
+        return true;
+    }
+
+    // PIECE MOVE (with optional disambiguation and capture)
+    // e.g. Nf3, R1a3, Nbd2, Bxf6
+    const pieceRegex = /^([NBRQK])([a-h1-8]{0,2})(x?)([a-h][1-8])$/i;
+    const pmatch = move.match(pieceRegex);
+    if (pmatch) {
+        const pieceLetter = pmatch[1].toUpperCase();
+        const disamb = pmatch[2] || '';
+        // captureFlag intentionally unused - SAN indicates capture with 'x' but we accept both when destination occupied or en-passant
+         const dest = pmatch[4].toLowerCase();
+         const toRC = squareToRC(dest);
+         if (!toRC) return false;
+
+        // collect candidate source squares for the piece
+        let candidates = findCandidateSources(pieceLetter, color, dest);
+        // apply disambiguation: disamb can be file, rank, or file+rank
+        if (disamb) {
+            const dchars = disamb.split('');
+            candidates = candidates.filter(p => {
+                const file = String.fromCharCode(97 + p.c);
+                const rank = (8 - p.r).toString();
+                // must match all disambiguation chars in order (either file or rank)
+                for (const ch of dchars) {
+                    if (/[a-h]/i.test(ch)) {
+                        if (file !== ch) return false;
+                    } else if (/[1-8]/.test(ch)) {
+                        if (rank !== ch) return false;
+                    } else return false;
+                }
+                return true;
+            });
+        }
+
+        if (candidates.length === 0) return false;
+        // pick first candidate (deterministic) - SAN should have disambiguated when needed
         const chosen = candidates[0];
-        const fromSq = String.fromCharCode(97 + chosen.c) + (8 - chosen.r);
+        const fromSq = rcToSquare(chosen.r, chosen.c);
+
         const capturedChar = getPieceCharAt(dest);
         logMoveDescription(fromSq, dest, pieceLetter, capturedChar, null, color);
         // perform move
@@ -1137,19 +1355,147 @@ function applyMoveSAN(moveRaw, color) {
         removePiece(dest);
         const placed = (color === 'w') ? pieceLetter.toUpperCase() : pieceLetter.toLowerCase();
         setPiece(dest, placed);
+        gameState.lastMove = { from: fromSq, to: dest, piece: pieceLetter, color, wasDoublePawnPush: false };
         return true;
     }
 
-    // Fallback: unrecognized move
+    // Unknown/unsupported SAN
     return false;
 }
 
 // ==========================
 // Board syncing from chess.com move list
 // ==========================
+// The following helpers will locate the chess.com move-list DOM, extract SAN strings,
+// and replay them using the existing applyMoveSAN() to sync our internal boardArray.
+
+let _lastObservedMoveCount = 0;
+
+function loadMovesFromDOM() {
+    // Try several selectors to find the move list element used by chess.com
+    const selectors = [
+        'wc-simple-move-list',
+        '.play-controller-moveList',
+        '.move-list',
+        '[class*="move-list"]'
+    ];
+    let el = null;
+    for (const sel of selectors) {
+        const found = document.querySelector(sel);
+        if (found) { el = found; break; }
+    }
+    if (!el) return [];
+
+    // Prefer the compact container which holds move pairs (example: .toggle-timestamps)
+    const container = el.querySelector('.toggle-timestamps') || el;
+
+    // Collect span texts which typically contain SAN tokens
+    const spans = Array.from(container.querySelectorAll('span'));
+    const raw = spans.map(s => (s.textContent || '').trim()).filter(Boolean);
+
+    // Normalize tokens: remove stray dots, move numbers, and empty items
+    const moves = [];
+    for (const t of raw) {
+        const s = t.replace(/\u00A0/g, ' ').trim();
+        if (!s) continue;
+        // ignore tokens that look like move numbers "1." or "1..."
+        if (/^\d+\.*$/.test(s)) continue;
+        // remove trailing dots and whitespace
+        const cleaned = s.replace(/^\.+|\.+$/g, '').trim();
+        if (cleaned === '') continue;
+        // sometimes spans include extra annotations like "..." or move numbers; keep SAN-like strings
+        moves.push(cleaned);
+    }
+
+    return moves;
+}
+
+function updateBoardFromDom(force = false) {
+    try {
+        const moves = loadMovesFromDOM();
+
+        console.log("moves: ");
+        console.log(moves);
+
+        if (!moves || moves.length === 0) {
+            // nothing to do
+            return;
+        }
+
+        // If not forced and move count hasn't changed, skip
+        if (!force && moves.length === _lastObservedMoveCount) return;
+        _lastObservedMoveCount = moves.length;
+
+        // Reset internal board to starting position
+        initStartingBoard();
+
+        // Apply moves in order; chess.com typically lists moves in SAN order: white then black
+        for (let i = 0; i < moves.length; i++) {
+            const san = String(moves[i]).trim();
+            if (!san) continue;
+            // color: even index -> white, odd -> black
+            const color = (i % 2 === 0) ? 'w' : 'b';
+            const ok = applyMoveSAN(san, color);
+            if (!ok) {
+                // best-effort: try stripping move numbers/annotations and reapply
+                const alt = san.replace(/^[0-9]+\.?/, '').replace(/\s+/g, '');
+                if (alt && alt !== san) applyMoveSAN(alt, color);
+            }
+        }
+
+        console.log('updateBoardFromDom: applied', moves.length, 'SAN tokens; boardArray updated');
+        printBoardArray();
+    } catch (e) {
+        console.warn('updateBoardFromDom failed:', e);
+    }
+}
+
+function observeMoveList() {
+    // Locate the move-list element; if not present yet, retry shortly
+    const selectors = [
+        'wc-simple-move-list',
+        '.play-controller-moveList',
+        '.move-list',
+        '[class*="move-list"]'
+    ];
+    let el = null;
+    for (const sel of selectors) {
+        const found = document.querySelector(sel);
+        if (found) { el = found; break; }
+    }
+
+    if (!el) {
+        // retry a few times as the page loads
+        setTimeout(observeMoveList, 500);
+        return;
+    }
+
+    // On first discovery, do an immediate sync
+    updateBoardFromDom(true);
+
+    // Observe changes to the move list (new moves appended or annotations changed)
+    const observer = new MutationObserver((mutations) => {
+        // Simple heuristic: if the subtree changed, re-run sync
+        for (const m of mutations) {
+            if (m.type === 'childList' || m.type === 'characterData' || m.type === 'subtree') {
+                // small debounce to avoid repeated work
+                try {
+                    setTimeout(() => updateBoardFromDom(false), 50);
+                } catch (e) {}
+                break;
+            }
+        }
+    });
+
+    observer.observe(el, { childList: true, subtree: true, characterData: true });
+}
+
 // Expose for debug/testing
 window.getChessBoardArray = getBoardArray;
 window.updateChessBoardFromDom = updateBoardFromDom;
 window.applyMoveSAN = applyMoveSAN;
+// Expose helper functions for debugging
+window.playPieceToSquare = playPieceToSquare;
+window.parsePieceAndDestFromNormalized = parsePieceAndDestFromNormalized;
 // start observing when the script loads (if DOM present)
 setTimeout(observeMoveList, 500);
