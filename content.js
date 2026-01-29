@@ -136,11 +136,21 @@ function handleVoiceCommand(text) {
     // (Ensure your 'game' object/controller is accessible here)
     const legalMoves = chessGame.getLegalMoves();
 
-    // Filter moves by the target square and piece type
-    const matches = legalMoves.filter(m =>
-        m.to === parsed.targetSquare &&
-        (parsed.piece === "" || m.piece === parsed.piece)
-    );
+    let matches = [];
+    if (parsed.fromFile !== "") {
+        matches = legalMoves.filter(m =>
+            m.to === parsed.targetSquare &&
+            (parsed.piece === "" || m.piece === parsed.piece) &&
+            m.from.charAt(0) === parsed.fromFile
+        );
+    } else {
+        // Filter moves by the target square and piece type
+        matches = legalMoves.filter(m =>
+            m.to === parsed.targetSquare &&
+            (parsed.piece === "" || m.piece === parsed.piece)
+        );
+    }
+
 
     if (matches.length === 1) {
         pendingMove = matches[0];
@@ -280,7 +290,9 @@ function parseVoiceMove(text) {
 
     // 3. Remove "noise" and spaces
     // We keep letters and numbers only
-    let condensed = raw.replace(/move|the|to|piece|square|\s/g, "");
+    let condensed = raw.replace(/move|the|to|piece|square|takes|\s/g, "");
+
+    console.log('1. Condensed input:', condensed);
 
     // 4. Extract Destination (Matches a letter followed by a digit)
     const match = condensed.match(/[a-h][1-8]/);
@@ -288,6 +300,10 @@ function parseVoiceMove(text) {
         console.log("❌ No coordinate found in:", condensed);
         return null;
     }
+
+    const fileRegex = condensed.match(/^([a-h])(?=pawn|knight|bishop|rook|queen|king|horse)/i);
+    const fromFile = fileRegex ? fileRegex[1] : "";
+    console.log('2. fromFile:', fromFile);
 
     let targetSquare = match[0];
     console.log('✅ Found targetSquare:', targetSquare);
@@ -304,7 +320,7 @@ function parseVoiceMove(text) {
     piece = piece.toLowerCase();
     targetSquare = targetSquare.toLowerCase();
 
-    return { piece, targetSquare };
+    return {piece, targetSquare, fromFile};
 }
 
 /**
