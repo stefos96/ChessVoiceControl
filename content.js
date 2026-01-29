@@ -145,7 +145,7 @@ function handleVoiceCommand(text) {
     if (matches.length === 1) {
         pendingMove = matches[0];
         isAwaitingConfirmation = true;
-        speak(`Move to ${getPieceName(parsed.piece)} ${parsed.targetSquare}? Say yes or no.`);
+        speak(`Move ${getPieceName(parsed.piece)} ${parsed.targetSquare}? Say yes or no.`);
     } else if (matches.length > 1) {
         speak("Multiple pieces can move there. Please specify which one.");
     } else {
