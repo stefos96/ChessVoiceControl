@@ -4,9 +4,59 @@ const synth = window.speechSynthesis;
 let selectedVoice = null;
 let boardArray = [];
 
-const EXT_URL = document.currentScript ?
-    document.currentScript.src.split('content.js')[0] :
-    "";
+let isAwaitingConfirmation = false;
+let pendingMove = null;
+
+let chessGame = null; // Placeholder for the chess game object
+
+const chessGrammar = [
+    "a", "b", "c", "d", "e", "f", "g", "h",
+    "one", "two", "three", "four", "five", "six", "seven", "eight",
+    "1", "2", "3", "4", "5", "6", "7", "8",
+    "pawn", "knight", "bishop", "rook", "queen", "king", "horse",
+    "takes", "capture", "to", "castles", "kingside", "queenside",
+    "yes", "no", "confirm", "cancel", "[unk]" // [unk] handles unknown noise
+];
+
+const numberMap = {
+    "one": "1", "won": "1",
+    "two": "2", "too": "2", "to": "2",
+    "three": "3", "tree": "3",
+    "four": "4", "for": "4",
+    "five": "5",
+    "six": "6", "sex": "6",
+    "seven": "7",
+    "eight": "8", "ate": "8"
+};
+
+const alphaMap = {
+    "alpha": "a", "bravo": "b", "charlie": "c", "delta": "d", "echo": "e", "foxtrot": "f", "golf": "g", "hotel": "h",
+    "see": "c", "sea": "c", "be": "b", "bee": "b", "day": "d", "do": "d"
+};
+
+const phoneticMap = {
+    "do": "d",
+    "the": "d",
+    "de": "d",
+    "day": "d",
+    "three": "3",
+    "tree": "3",
+    "to": "2",
+    "two": "2",
+    "too": "2",
+    "for": "4",
+    "four": "4",
+    "ate": "8",
+    "eight": "8",
+    "see": "c",
+    "sea": "c",
+    "be": "b",
+    "bee": "b",
+    "alpha": "a",
+    "bravo": "b",
+    "delta": "d",
+    "echo": "e"
+};
 
 // 1. VOICE SYNTHESIS SETUP
 function loadBestVoice() {
@@ -15,6 +65,7 @@ function loadBestVoice() {
         voices.find(v => v.name.includes('Natural')) ||
         voices.find(v => v.lang === 'en-US');
 }
+
 window.speechSynthesis.onvoiceschanged = loadBestVoice;
 loadBestVoice();
 
@@ -56,35 +107,49 @@ function updateBoard() {
 
 // 3. VOSK VOICE COMMAND PROCESSING
 function handleVoiceCommand(text) {
-    const boardElement = document.querySelector('wc-chess-board');
-    if (!boardElement || !boardElement.game) return;
+    console.log("🎤 Vosk heard:", text);
+    const lowerText = text.toLowerCase().trim();
 
-    console.log("Vosk heard:", text);
+    // --- State: Confirmation ---
+    if (isAwaitingConfirmation) {
+        if (lowerText.includes("yes") || lowerText.includes("confirm")) {
+            // 1. Execute the logical move
+            chessGame.move(pendingMove);
+            chessGame.moveForward();
 
-    // Normalize text: "bishop to b7" -> "bb7", "knight f3" -> "nf3"
-    let cleanText = text.toLowerCase()
-        .replace("to", "")
-        .replace("two", "2")
-        .replace("four", "4")
-        .replace("for", "4")
-        .replace("eight", "8")
-        .replace("night", "n") // Very common mishearing
-        .replace(/\s+/g, "");
+            speak("Confirmed.");
+            isAwaitingConfirmation = false;
+            pendingMove = null;
+        } else if (lowerText.includes("no") || lowerText.includes("cancel")) {
+            speak("Cancelled.");
+            isAwaitingConfirmation = false;
+            pendingMove = null;
+        }
+        return;
+    }
 
-    const legalMoves = boardElement.game.getLegalMoves();
+    // --- State: Parsing New Move ---
+    const parsed = parseVoiceMove(text);
+    if (!parsed) return;
 
-    // Strategy: Find a move where the lowercase SAN (e.g., 'nf3', 'e4', 'b7')
-    // matches the cleaned voice string.
-    const matchedMove = legalMoves.find(m => {
-        const san = m.san.toLowerCase().replace(/[x+#-]/g, "");
-        return san === cleanText || san.includes(cleanText);
-    });
+    // Get legal moves from Chess.com's engine
+    // (Ensure your 'game' object/controller is accessible here)
+    const legalMoves = chessGame.getLegalMoves();
 
-    if (matchedMove) {
-        console.log("Executing Move:", matchedMove.san);
-        boardElement.game.move(matchedMove.san);
+    // Filter moves by the target square and piece type
+    const matches = legalMoves.filter(m =>
+        m.to === parsed.targetSquare &&
+        (parsed.piece === "" || m.san.startsWith(parsed.piece))
+    );
+
+    if (matches.length === 1) {
+        pendingMove = matches[0];
+        isAwaitingConfirmation = true;
+        speak(`Move to ${parsed.targetSquare}? Say yes or no.`);
+    } else if (matches.length > 1) {
+        speak("Multiple pieces can move there. Please specify which one.");
     } else {
-        console.warn("No legal move match for:", cleanText);
+        console.log("❌ No legal move match for:", parsed.targetSquare);
     }
 }
 
@@ -103,7 +168,7 @@ async function initVosk() {
 
             const model = await Vosk.createModel(modelPath);
             // 0.0.8 requires the sample rate (16000) here
-            const recognizer = new model.KaldiRecognizer(16000);
+            const recognizer = new model.KaldiRecognizer(16000, JSON.stringify(chessGrammar));
 
             // 1. Get the Microphone
             const stream = await navigator.mediaDevices.getUserMedia({
@@ -117,7 +182,7 @@ async function initVosk() {
 
             // 2. Setup the Audio Context
             // We force 16000Hz to match the Vosk model's requirement
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
             const source = audioContext.createMediaStreamSource(stream);
 
             // 3. Create a Processor Node (The bridge to Vosk)
@@ -162,6 +227,8 @@ const initInterval = setInterval(() => {
     if (boardElement && boardElement.game) {
         console.log('Success! Game object found.');
 
+        chessGame = boardElement.game;
+
         boardElement.game.on('Move', (event) => {
             updateBoard();
             // Handle TTS for opponent/own moves
@@ -178,7 +245,7 @@ const initInterval = setInterval(() => {
 
 // Helper for TTS
 function translateMoveToSpeech(san) {
-    const pieceNames = { 'N': 'Knight', 'B': 'Bishop', 'R': 'Rook', 'Q': 'Queen', 'K': 'King' };
+    const pieceNames = {'N': 'Knight', 'B': 'Bishop', 'R': 'Rook', 'Q': 'Queen', 'K': 'King'};
     if (san === 'O-O') return "Castles kingside";
     if (san === 'O-O-O') return "Castles queenside";
 
@@ -193,4 +260,48 @@ function translateMoveToSpeech(san) {
     }
     speech += san.replace(/[+#]/g, "");
     return speech;
+}
+
+function parseVoiceMove(text) {
+    let raw = text.toLowerCase().trim();
+    console.log('0. Raw input:', raw);
+
+    // 1. Replace word-numbers (six -> 6)
+    Object.keys(numberMap).forEach(word => {
+        const regex = new RegExp(`\\b${word}\\b`, 'g');
+        raw = raw.replace(regex, numberMap[word]);
+    });
+
+    // 2. Replace phonetic letters (alpha -> a)
+    Object.keys(alphaMap).forEach(word => {
+        const regex = new RegExp(`\\b${word}\\b`, 'g');
+        raw = raw.replace(regex, alphaMap[word]);
+    });
+
+    console.log('1. Phonetic clean:', raw);
+
+    // 3. Remove "noise" and spaces
+    // We keep letters and numbers only
+    let condensed = raw.replace(/move|the|pawn|to|piece|square|\s/g, "");
+    console.log('2. Condensed:', condensed);
+
+    // 4. Extract Destination (Matches a letter followed by a digit)
+    const match = condensed.match(/[a-h][1-8]/);
+    if (!match) {
+        console.log("❌ No coordinate found in:", condensed);
+        return null;
+    }
+
+    const targetSquare = match[0];
+    console.log('✅ Found targetSquare:', targetSquare);
+
+    // 5. Extract Piece
+    let piece = ""; // Default to pawn
+    if (condensed.includes("knight") || condensed.includes("night") || condensed.includes("horse")) piece = "N";
+    else if (condensed.includes("bishop")) piece = "B";
+    else if (condensed.includes("rook") || condensed.includes("tower")) piece = "R";
+    else if (condensed.includes("queen")) piece = "Q";
+    else if (condensed.includes("king")) piece = "K";
+
+    return { piece, targetSquare };
 }
