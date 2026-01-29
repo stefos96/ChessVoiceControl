@@ -282,19 +282,24 @@ function parseVoiceMove(text) {
         raw = raw.replace(regex, numberMap[word]);
     });
 
-    // 2. Replace phonetic letters (alpha -> a)
+    // 3. Replace phonetic letters (alpha -> a)
     Object.keys(alphaMap).forEach(word => {
         const regex = new RegExp(`\\b${word}\\b`, 'g');
         raw = raw.replace(regex, alphaMap[word]);
     });
 
-    // 3. Remove "noise" and spaces
+    // 4. Remove "noise" and spaces
     // We keep letters and numbers only
     let condensed = raw.replace(/move|the|to|piece|square|takes|\s/g, "");
 
+    // 2. THE FIX: Handle the "8" vs "H" ambiguity
+    // If we see an '8' followed by a number (e.g., '83'),
+    // it's actually the H-file (e.g., 'h3').
+    condensed = condensed.replace(/8(?=[1-8])/g, 'h');
+
     console.log('1. Condensed input:', condensed);
 
-    // 4. Extract Destination (Matches a letter followed by a digit)
+    // 5. Extract Destination (Matches a letter followed by a digit)
     const match = condensed.match(/[a-h][1-8]/);
     if (!match) {
         console.log("❌ No coordinate found in:", condensed);
