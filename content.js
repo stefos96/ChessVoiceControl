@@ -306,6 +306,10 @@ function parseVoiceMove(text) {
         return null;
     }
 
+    if (condensed.charAt(0) === "8") {
+        condensed = "h" + condensed.slice(1);
+    }
+
     const fileRegex = condensed.match(/^([a-h])(?=pawn|knight|bishop|rook|queen|king|horse)/i);
     const fromFile = fileRegex ? fileRegex[1] : "";
     console.log('2. fromFile:', fromFile);
