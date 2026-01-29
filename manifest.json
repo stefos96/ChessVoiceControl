@@ -1,22 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Chess Voice Controller",
-  "version": "1.0",
-  "description": "Control chess.com with voice input",
-  "permissions": ["activeTab", "scripting", "microphone", "storage"],
-  "action": {
-    "default_popup": "popup.html"
-  },
+  "name": "Chess.com State Extractor",
+  "version": "1.1",
+  "permissions": ["activeTab"],
   "content_scripts": [
     {
-      "matches": ["*://www.chess.com/*"],
-      "js": ["content.js"]
-    }
-  ],
-  "web_accessible_resources": [
-    {
-      "resources": ["injected_page_script.js", "vosk-worker.js", "vosk.js", "vosk-model/*"],
-      "matches": ["*://www.chess.com/*"]
+      "matches": ["https://www.chess.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "world": "MAIN"
     }
   ]
 }
