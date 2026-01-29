@@ -139,13 +139,13 @@ function handleVoiceCommand(text) {
     // Filter moves by the target square and piece type
     const matches = legalMoves.filter(m =>
         m.to === parsed.targetSquare &&
-        (parsed.piece === "" || m.san.startsWith(parsed.piece))
+        (parsed.piece === "" || m.piece === parsed.piece)
     );
 
     if (matches.length === 1) {
         pendingMove = matches[0];
         isAwaitingConfirmation = true;
-        speak(`Move ${getPieceName(parsed.piece)} ${parsed.targetSquare}? Say yes or no.`);
+        speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}? Say yes or no.`);
     } else if (matches.length > 1) {
         speak("Multiple pieces can move there. Please specify which one.");
     } else {
@@ -278,12 +278,9 @@ function parseVoiceMove(text) {
         raw = raw.replace(regex, alphaMap[word]);
     });
 
-    console.log('1. Phonetic clean:', raw);
-
     // 3. Remove "noise" and spaces
     // We keep letters and numbers only
-    let condensed = raw.replace(/move|the|pawn|to|piece|square|\s/g, "");
-    console.log('2. Condensed:', condensed);
+    let condensed = raw.replace(/move|the|to|piece|square|\s/g, "");
 
     // 4. Extract Destination (Matches a letter followed by a digit)
     const match = condensed.match(/[a-h][1-8]/);
@@ -292,7 +289,7 @@ function parseVoiceMove(text) {
         return null;
     }
 
-    const targetSquare = match[0];
+    let targetSquare = match[0];
     console.log('✅ Found targetSquare:', targetSquare);
 
     // 5. Extract Piece
@@ -302,6 +299,10 @@ function parseVoiceMove(text) {
     else if (condensed.includes("rook") || condensed.includes("tower")) piece = "R";
     else if (condensed.includes("queen")) piece = "Q";
     else if (condensed.includes("king")) piece = "K";
+    else if (condensed.includes("pawn")) piece = "P";
+
+    piece = piece.toLowerCase();
+    targetSquare = targetSquare.toLowerCase();
 
     return { piece, targetSquare };
 }
