@@ -1,14 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "Chess.com State Extractor",
-  "version": "1.1",
-  "permissions": ["activeTab"],
+  "name": "Chess Voice Vosk",
+  "version": "1.5",
+  "permissions": ["audioCapture"],
   "content_scripts": [
+    {
+      "matches": ["https://www.chess.com/*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
     {
       "matches": ["https://www.chess.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle",
       "world": "MAIN"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/vosk.js", "models/vosk-model-small-en-us-0.15.zip"],
+      "matches": ["https://www.chess.com/*"]
     }
   ]
 }
