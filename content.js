@@ -113,7 +113,7 @@ function handleVoiceCommand(text) {
     if (isAwaitingConfirmation) {
         if (lowerText.includes("yes") || lowerText.includes("confirm")) {
             // 1. Execute the logical move
-            chessGame.move(pendingMove);
+            chessGame.move({...pendingMove, userGenerated: true});
             chessGame.moveForward();
 
             updateHUD("Move Confirmed!", 'success');
@@ -194,7 +194,7 @@ function handleVoiceCommand(text) {
 
         if (settings.autoConfirm) {
             // Skip confirmation state entirely
-            chessGame.move(pendingMove);
+            chessGame.move({...pendingMove, userGenerated: true});
             chessGame.moveForward();
             speak("Moving.");
             updateHUD(`Moving: ${moveStr}`, 'success');
