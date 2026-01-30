@@ -9,6 +9,8 @@ let pendingMove = null;
 
 let chessGame = null; // Placeholder for the chess game object
 
+let hudElement = null;
+
 const chessGrammar = [
     "a", "b", "c", "d", "e", "f", "g", "h",
     "one", "two", "three", "four", "five", "six", "seven", "eight",
@@ -99,8 +101,6 @@ function updateBoard() {
     if (boardElement && boardElement.game) {
         const fen = boardElement.game.getFEN();
         boardArray = fenTo2DArray(fen);
-        console.log("Current Board State:");
-        console.table(boardArray);
     }
 }
 
@@ -116,11 +116,16 @@ function handleVoiceCommand(text) {
             chessGame.move(pendingMove);
             chessGame.moveForward();
 
+            updateHUD("Move Confirmed!", 'success');
+
             speak("Confirmed.");
             isAwaitingConfirmation = false;
             pendingMove = null;
         } else if (lowerText.includes("no") || lowerText.includes("cancel")) {
             speak("Cancelled.");
+
+            updateHUD("Move Cancelled.", 'error');
+
             isAwaitingConfirmation = false;
             pendingMove = null;
         }
@@ -153,6 +158,8 @@ function handleVoiceCommand(text) {
     // --- State: Parsing New Move ---
     const parsed = parseVoiceMove(text);
     if (!parsed) return;
+
+    updateHUD(`${parsed?.fromFile + getPieceName(parsed.piece)} to ${parsed.targetSquare} ${parsed.promotion != null ? parsed.promotion : ''}`, 'success');
 
     // Get legal moves from Chess.com's engine
     // (Ensure your 'game' object/controller is accessible here)
@@ -188,15 +195,19 @@ function handleVoiceCommand(text) {
             chessGame.move(pendingMove);
             chessGame.moveForward();
             speak("Moving.");
+            updateHUD(`Moving: ${moveStr}`, 'success');
             isAwaitingConfirmation = false;
         } else {
             isAwaitingConfirmation = true;
+            updateHUD(`Confirm: ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`, 'parsing');
             speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`);
         }
 
     } else if (matches.length > 1) {
+        updateHUD("Multiple pieces can move there!", 'error');
         speak("Multiple pieces can move there. Please specify which one.");
     } else {
+        updateHUD("Illegal Move Attempted", 'error');
         console.log("❌ No legal move match for:", parsed.targetSquare);
     }
 }
@@ -259,6 +270,7 @@ async function initVosk() {
             });
 
             console.log("✅ Vosk 0.0.8 is LIVE and listening!");
+            updateHUD("System Live - Listening...", 'success');
             speak("Voice system ready.");
 
         } catch (err) {
@@ -407,3 +419,49 @@ function getPieceName(symbol) {
     // 2. Return the name, defaulting to 'pawn' if the symbol is empty or unknown
     return pieceMap[char] || 'pawn';
 }
+
+function createSpeechHUD() {
+    hudElement = document.createElement('div');
+    hudElement.id = 'chess-voice-hud';
+
+    // Styling the bubble to match Chess.com's dark theme
+    Object.assign(hudElement.style, {
+        position: 'fixed',
+        bottom: '20px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        padding: '12px 20px',
+        backgroundColor: 'rgba(38, 36, 33, 0.95)',
+        color: '#bababa',
+        borderRadius: '25px',
+        fontSize: '16px',
+        fontFamily: 'sans-serif',
+        zIndex: '10000',
+        border: '2px solid #81b64c',
+        boxShadow: '0 4px 15px rgba(0,0,0,0.5)',
+        transition: 'all 0.3s ease',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        pointerEvents: 'none'
+    });
+
+    hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
+    document.body.appendChild(hudElement);
+}
+
+function updateHUD(text, type = 'neutral') {
+    if (!hudElement) createSpeechHUD();
+    const textEl = document.getElementById('hud-text');
+    const iconEl = document.getElementById('hud-icon');
+
+    textEl.innerText = text;
+
+    // Visual feedback colors
+    if (type === 'success') hudElement.style.borderColor = '#81b64c'; // Green
+    if (type === 'error') hudElement.style.borderColor = '#fa4343';   // Red
+    if (type === 'parsing') hudElement.style.borderColor = '#ffaa00'; // Orange
+}
+
+// Initialize HUD on load
+createSpeechHUD();
