@@ -15,7 +15,7 @@ const chessGrammar = [
     "1", "2", "3", "4", "5", "6", "7", "8",
     "pawn", "knight", "bishop", "rook", "queen", "king", "horse",
     "takes", "capture", "to", "castles", "castle", "kingside", "queenside",
-    "short", "long",
+    "short", "long", "promote",
     "yes", "no", "confirm", "cancel", "[unk]" // [unk] handles unknown noise
 ];
 
@@ -159,7 +159,14 @@ function handleVoiceCommand(text) {
     const legalMoves = chessGame.getLegalMoves();
 
     let matches = [];
-    if (parsed.fromFile !== "") {
+
+    if (parsed.promotion !== null) {
+        matches = legalMoves.filter(m =>
+            m.to === parsed.targetSquare &&
+            (parsed.piece === "" || m.piece === parsed.piece) &&
+            (m.promotion === parsed.promotion)
+        );
+    } else if (parsed.fromFile !== "") {
         matches = legalMoves.filter(m =>
             m.to === parsed.targetSquare &&
             (parsed.piece === "" || m.piece === parsed.piece) &&
@@ -184,7 +191,7 @@ function handleVoiceCommand(text) {
             isAwaitingConfirmation = false;
         } else {
             isAwaitingConfirmation = true;
-            speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}? Say yes or no.`);
+            speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`);
         }
 
     } else if (matches.length > 1) {
@@ -307,6 +314,9 @@ function parseVoiceMove(text) {
     let raw = text.toLowerCase().trim();
     console.log('0. Raw input:', raw);
 
+    // Check if user mentioned promotion
+    const isPromotion = raw.includes("promote");
+
     // 1. Replace word-numbers (six -> 6)
     Object.keys(numberMap).forEach(word => {
         const regex = new RegExp(`\\b${word}\\b`, 'g');
@@ -321,12 +331,13 @@ function parseVoiceMove(text) {
 
     // 4. Remove "noise" and spaces
     // We keep letters and numbers only
-    let condensed = raw.replace(/move|the|to|piece|square|takes|castle|castles|\s/g, "");
+    let condensed = raw.replace(/move|the|to|piece|square|takes|castle|castles|promote\s/g, "");
 
     // 2. THE FIX: Handle the "8" vs "H" ambiguity
     // If we see an '8' followed by a number (e.g., '83'),
     // it's actually the H-file (e.g., 'h3').
     condensed = condensed.replace(/8(?=[1-8])/g, 'h');
+    condensed = condensed.replaceAll(" ", "");
 
     console.log('1. Condensed input:', condensed);
 
@@ -349,18 +360,30 @@ function parseVoiceMove(text) {
     console.log('✅ Found targetSquare:', targetSquare);
 
     // 5. Extract Piece
-    let piece = ""; // Default to pawn
-    if (condensed.includes("knight") || condensed.includes("night") || condensed.includes("horse")) piece = "N";
-    else if (condensed.includes("bishop")) piece = "B";
-    else if (condensed.includes("rook") || condensed.includes("tower")) piece = "R";
-    else if (condensed.includes("queen")) piece = "Q";
-    else if (condensed.includes("king")) piece = "K";
-    else if (condensed.includes("pawn")) piece = "P";
+    let piece = "p"; // Default to pawn
+
+    // NEW: Extract Promotion Piece
+    let promotion = null;
+    if (isPromotion) {
+        // We look specifically at the end of the raw string or after the target square
+        if (raw.includes("queen")) promotion = "q";
+        else if (raw.includes("knight") || raw.includes("horse")) promotion = "n";
+        else if (raw.includes("rook")) promotion = "r";
+        else if (raw.includes("bishop")) promotion = "b";
+        else promotion = "q"; // Default to Queen if "promote" was said but no piece was specified
+    } else {
+        // When it's not a promotion, we extract the piece normally
+        if (condensed.includes("knight") || condensed.includes("night") || condensed.includes("horse")) piece = "N";
+        else if (condensed.includes("bishop")) piece = "B";
+        else if (condensed.includes("rook") || condensed.includes("tower")) piece = "R";
+        else if (condensed.includes("queen")) piece = "Q";
+        else if (condensed.includes("king")) piece = "K";
+    }
 
     piece = piece.toLowerCase();
     targetSquare = targetSquare.toLowerCase();
 
-    return {piece, targetSquare, fromFile};
+    return {piece, targetSquare, fromFile, promotion};
 }
 
 /**
