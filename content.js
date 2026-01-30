@@ -14,7 +14,8 @@ const chessGrammar = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
     "1", "2", "3", "4", "5", "6", "7", "8",
     "pawn", "knight", "bishop", "rook", "queen", "king", "horse",
-    "takes", "capture", "to", "castles", "kingside", "queenside",
+    "takes", "capture", "to", "castles", "castle", "kingside", "queenside",
+    "short", "long",
     "yes", "no", "confirm", "cancel", "[unk]" // [unk] handles unknown noise
 ];
 
@@ -126,6 +127,29 @@ function handleVoiceCommand(text) {
             pendingMove = null;
         }
         return;
+    }
+
+    // --- NEW: Castling Logic ---
+    if (lowerText.includes("castle") || lowerText.includes("castles")) {
+        const isQueenside = lowerText.includes("queenside") || lowerText.includes("long");
+        const isKingside = lowerText.includes("kingside") || lowerText.includes("short");
+
+        const legalMoves = chessGame.getLegalMoves();
+        // O-O is Kingside, O-O-O is Queenside
+        const castleMove = legalMoves.find(m =>
+            (isQueenside && m.san === "O-O-O") ||
+            (isKingside && m.san === "O-O")
+        );
+
+        if (castleMove) {
+            pendingMove = castleMove;
+            isAwaitingConfirmation = true;
+            speak(`Castle ${isQueenside ? "queenside" : "kingside"}?`);
+            return; // Exit so we don't run normal parsing
+        } else {
+            speak("Castling is not legal in this position.");
+            return;
+        }
     }
 
     // --- State: Parsing New Move ---
@@ -290,7 +314,7 @@ function parseVoiceMove(text) {
 
     // 4. Remove "noise" and spaces
     // We keep letters and numbers only
-    let condensed = raw.replace(/move|the|to|piece|square|takes|\s/g, "");
+    let condensed = raw.replace(/move|the|to|piece|square|takes|castle|castles|\s/g, "");
 
     // 2. THE FIX: Handle the "8" vs "H" ambiguity
     // If we see an '8' followed by a number (e.g., '83'),
