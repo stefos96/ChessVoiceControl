@@ -187,6 +187,8 @@ function handleVoiceCommand(text) {
         );
     }
 
+    let moveStr = `${getPieceName(parsed.piece)} to ${parsed.targetSquare}`;
+
     if (matches.length === 1) {
         pendingMove = matches[0];
 
@@ -199,7 +201,7 @@ function handleVoiceCommand(text) {
             isAwaitingConfirmation = false;
         } else {
             isAwaitingConfirmation = true;
-            updateHUD(`Confirm: ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`, 'parsing');
+            updateHUD(`Confirm: ${moveStr}?`, 'parsing');
             speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`);
         }
 
