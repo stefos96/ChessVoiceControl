@@ -1,26 +1,30 @@
-document.addEventListener('DOMContentLoaded', () => {
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
+// popup.js
+console.log('Popup script loaded');
 
-    startBtn.addEventListener('click', async () => {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+const autoConfirm = document.getElementById('autoConfirm');
+const enableTTS = document.getElementById('enableTTS');
 
-        chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-                window.dispatchEvent(new Event('voiceChessStart'));
-            }
-        }).catch(err => console.error(err));
-    });
-
-    stopBtn.addEventListener('click', async () => {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: () => {
-                window.dispatchEvent(new Event('voiceChessStop'));
-            }
-        }).catch(err => console.error(err));
-    });
+// Load saved settings
+chrome.storage.sync.get(['autoConfirm', 'enableTTS'], (result) => {
+    autoConfirm.checked = result.autoConfirm || false;
+    enableTTS.checked = result.enableTTS !== false;
 });
+
+// Save on change - Fixed the listener assignments
+autoConfirm.addEventListener('change', () => saveAndNotify('autoConfirm', autoConfirm.checked));
+enableTTS.addEventListener('change', () => saveAndNotify('enableTTS', enableTTS.checked)); // Fixed key here
+
+function saveAndNotify(key, value) {
+    const data = {};
+    data[key] = value;
+
+    // 1. Save to storage (triggers the Bridge listener)
+    chrome.storage.sync.set(data);
+
+    // 2. Direct Ping (Backup for the Bridge listener)
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        if (tabs[0]) {
+            chrome.tabs.sendMessage(tabs[0].id, {type: "SETTING_CHANGE", key: key, value: value});
+        }
+    });
+}

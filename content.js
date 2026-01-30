@@ -35,29 +35,25 @@ const alphaMap = {
     "see": "c", "sea": "c", "be": "b", "bee": "b", "day": "d", "do": "d"
 };
 
-const phoneticMap = {
-    "do": "d",
-    "the": "d",
-    "de": "d",
-    "day": "d",
-    "three": "3",
-    "tree": "3",
-    "to": "2",
-    "two": "2",
-    "too": "2",
-    "for": "4",
-    "four": "4",
-    "ate": "8",
-    "eight": "8",
-    "see": "c",
-    "sea": "c",
-    "be": "b",
-    "bee": "b",
-    "alpha": "a",
-    "bravo": "b",
-    "delta": "d",
-    "echo": "e"
-};
+// content.js (MAIN)
+let settings = { autoConfirm: false, enableTTS: true };
+
+// 1. Setup the listener first
+window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
+    const newSettings = event.detail;
+    if (newSettings.autoConfirm !== undefined) settings.autoConfirm = newSettings.autoConfirm;
+    if (newSettings.enableTTS !== undefined) settings.enableTTS = newSettings.enableTTS;
+    console.log("📥 Main World settings updated:", settings);
+});
+
+// 2. Immediate request for settings
+console.log("📡 Content script requesting settings...");
+window.dispatchEvent(new CustomEvent('REQUEST_CHESS_SETTINGS'));
+
+// 3. Backup request after 500ms (to ensure bridge.js is awake)
+setTimeout(() => {
+    window.dispatchEvent(new CustomEvent('REQUEST_CHESS_SETTINGS'));
+}, 500);
 
 // 1. VOICE SYNTHESIS SETUP
 function loadBestVoice() {
@@ -71,11 +67,13 @@ window.speechSynthesis.onvoiceschanged = loadBestVoice;
 loadBestVoice();
 
 function speak(text) {
-    if (synth.speaking) synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (selectedVoice) utterance.voice = selectedVoice;
-    utterance.rate = 1.1;
-    synth.speak(utterance);
+    if (settings.enableTTS) {
+        if (synth.speaking) synth.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        if (selectedVoice) utterance.voice = selectedVoice;
+        utterance.rate = 1.1;
+        synth.speak(utterance);
+    }
 }
 
 // 2. BOARD LOGIC
@@ -175,11 +173,20 @@ function handleVoiceCommand(text) {
         );
     }
 
-
     if (matches.length === 1) {
         pendingMove = matches[0];
-        isAwaitingConfirmation = true;
-        speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}? Say yes or no.`);
+
+        if (settings.autoConfirm) {
+            // Skip confirmation state entirely
+            chessGame.move(pendingMove);
+            chessGame.moveForward();
+            speak("Moving.");
+            isAwaitingConfirmation = false;
+        } else {
+            isAwaitingConfirmation = true;
+            speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}? Say yes or no.`);
+        }
+
     } else if (matches.length > 1) {
         speak("Multiple pieces can move there. Please specify which one.");
     } else {
