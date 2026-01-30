@@ -38,7 +38,7 @@ const alphaMap = {
 };
 
 // content.js (MAIN)
-let settings = { autoConfirm: false, enableTTS: true };
+let settings = {autoConfirm: false, enableTTS: true};
 
 // 1. Setup the listener first
 window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
@@ -165,7 +165,7 @@ function handleVoiceCommand(text) {
     // (Ensure your 'game' object/controller is accessible here)
     const legalMoves = chessGame.getLegalMoves();
 
-    let matches = [];
+    let matches;
 
     if (parsed.promotion !== null) {
         matches = legalMoves.filter(m =>
@@ -453,7 +453,6 @@ function createSpeechHUD() {
 function updateHUD(text, type = 'neutral') {
     if (!hudElement) createSpeechHUD();
     const textEl = document.getElementById('hud-text');
-    const iconEl = document.getElementById('hud-icon');
 
     textEl.innerText = text;
 
