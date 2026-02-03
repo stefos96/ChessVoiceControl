@@ -2,11 +2,21 @@
 <html>
 <head>
     <style>
-        body { width: 220px; padding: 15px; font-family: sans-serif; background: #262421; color: #bababa; }
-        h2 { color: #81b64c; font-size: 16px; margin-top: 0; }
+        body { width: 240px; padding: 15px; font-family: sans-serif; background: #262421; color: #bababa; }
+        h2 { color: #81b64c; font-size: 16px; margin-top: 0; border-bottom: 1px solid #444; padding-bottom: 8px; }
         .option { margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; }
         input[type="checkbox"] { cursor: pointer; accent-color: #81b64c; }
-        .status { font-size: 11px; color: #777; border-top: 1px solid #444; pt: 8px; margin-top: 10px; }
+
+        /* Collapsible Styles */
+        details { background: #312e2b; border-radius: 4px; margin-top: 15px; border: 1px solid #444; }
+        summary { padding: 8px; cursor: pointer; color: #81b64c; font-weight: bold; font-size: 13px; outline: none; }
+        summary:hover { background: #3b3834; }
+
+        .command-list { padding: 0 10px 10px 10px; font-size: 12px; line-height: 1.6; }
+        .command-list b { color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444; }
+        .command-list div { padding-left: 4px; color: #d3d3d3; }
+
+        .status { font-size: 11px; color: #777; border-top: 1px solid #444; padding-top: 8px; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -26,6 +36,29 @@
     <span>Enable Voice Input</span>
     <input type="checkbox" id="enableVoice" checked>
 </div>
+
+<details>
+    <summary>Voice Commands Help</summary>
+    <div class="command-list">
+        <b>Basic Moves</b>
+        <div>"Rook d8", "Knight f3", "e4"</div>
+
+        <b>Disambiguation</b>
+        <div>"Rook h 1 to g 1"</div>
+        <div>"Eight rook to g 1"</div>
+
+        <b>Castling</b>
+        <div>"Castle kingside" / "Short"</div>
+        <div>"Castle queenside" / "Long"</div>
+
+        <b>Promotion</b>
+        <div>"Promote a 8 queen"</div>
+        <div>"Promote b 8 knight"</div>
+
+        <b>Confirmation</b>
+        <div>"Yes", "Confirm", "No", "Cancel"</div>
+    </div>
+</details>
 
 <div class="status">Vosk Model: <span id="modelStatus" style="color:#81b64c">Ready</span></div>
 

@@ -17,6 +17,7 @@ const chessGrammar = [
     "1", "2", "3", "4", "5", "6", "7", "8",
     "pawn", "knight", "bishop", "rook", "queen", "king", "horse",
     "takes", "capture", "to", "castles", "castle", "kingside", "queenside",
+    "side",
     "short", "long", "promote",
     "yes", "no", "confirm", "cancel", "[unk]" // [unk] handles unknown noise
 ];
@@ -118,6 +119,7 @@ function handleVoiceCommand(text) {
     if (!settings.enableVoice) return;
 
     const lowerText = text.toLowerCase().trim();
+    updateHUD(`${lowerText}`, 'success');
 
     // --- State: Confirmation ---
     if (isAwaitingConfirmation) {
@@ -145,7 +147,8 @@ function handleVoiceCommand(text) {
     // --- NEW: Castling Logic ---
     if (lowerText.includes("castle") || lowerText.includes("castles")) {
         const isQueenside = lowerText.includes("queenside") || lowerText.includes("long");
-        const isKingside = lowerText.includes("kingside") || lowerText.includes("short");
+        const isKingside = lowerText.includes("kingside")
+            || (lowerText.includes("king") && lowerText.includes("side")) || lowerText.includes("short");
 
         const legalMoves = chessGame.getLegalMoves();
         // O-O is Kingside, O-O-O is Queenside
