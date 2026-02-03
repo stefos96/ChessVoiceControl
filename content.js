@@ -165,52 +165,41 @@ function handleVoiceCommand(text) {
     // (Ensure your 'game' object/controller is accessible here)
     const legalMoves = chessGame.getLegalMoves();
 
-    let matches;
+    const matches = legalMoves.filter(m => {
+        const matchTarget = m.to === parsed.targetSquare;
+        const matchPiece = (m.piece === parsed.piece); // Pawn moves are 'p'
+        const matchPromotion = parsed.promotion ? (m.promotion === parsed.promotion) : !m.promotion;
 
-    if (parsed.promotion !== null) {
-        matches = legalMoves.filter(m =>
-            m.to === parsed.targetSquare &&
-            (parsed.piece === "" || m.piece === parsed.piece) &&
-            (m.promotion === parsed.promotion)
-        );
-    } else if (parsed.fromFile !== "") {
-        matches = legalMoves.filter(m =>
-            m.to === parsed.targetSquare &&
-            (parsed.piece === "" || m.piece === parsed.piece) &&
-            m.from.charAt(0) === parsed.fromFile
-        );
-    } else {
-        // Filter moves by the target square and piece type
-        matches = legalMoves.filter(m =>
-            m.to === parsed.targetSquare &&
-            (parsed.piece === "" || m.piece === parsed.piece)
-        );
-    }
+        let matchSource = true;
+        if (parsed.fromSquare) {
+            matchSource = m.from === parsed.fromSquare;
+        } else if (parsed.fromFile) {
+            matchSource = m.from.startsWith(parsed.fromFile);
+        }
 
-    let moveStr = `${getPieceName(parsed.piece)} to ${parsed.targetSquare}`;
+        return matchTarget && matchPiece && matchPromotion && matchSource;
+    });
+
+    const moveStr = `${parsed.fromSquare || parsed.fromFile || ""} ${getPieceName(parsed.piece)} to ${parsed.targetSquare}`;
 
     if (matches.length === 1) {
         pendingMove = matches[0];
 
         if (settings.autoConfirm) {
-            // Skip confirmation state entirely
             chessGame.move({...pendingMove, userGenerated: true});
             chessGame.moveForward();
             speak("Moving.");
             updateHUD(`Moving: ${moveStr}`, 'success');
-            isAwaitingConfirmation = false;
         } else {
             isAwaitingConfirmation = true;
             updateHUD(`Confirm: ${moveStr}?`, 'parsing');
             speak(`Move ${getPieceName(parsed.piece)} to ${parsed.targetSquare}?`);
         }
-
     } else if (matches.length > 1) {
-        updateHUD("Multiple pieces can move there!", 'error');
-        speak("Multiple pieces can move there. Please specify which one.");
+        updateHUD("Ambiguous: Multiple pieces can move there!", 'error');
+        speak("Two of your pieces can move there. Please specify which one, for example, say Rook h 1 to g 1.");
     } else {
-        updateHUD("Illegal Move Attempted", 'error');
-        console.log("❌ No legal move match for:", parsed.targetSquare);
+        updateHUD("Illegal Move", 'error');
     }
 }
 
@@ -326,78 +315,81 @@ function translateMoveToSpeech(san) {
 
 function parseVoiceMove(text) {
     let raw = text.toLowerCase().trim();
-    console.log('0. Raw input:', raw);
 
-    // Check if user mentioned promotion
+    // 1. Map words to numbers/letters
+    Object.keys(numberMap).forEach(word => {
+        raw = raw.replace(new RegExp(`\\b${word}\\b`, 'g'), numberMap[word]);
+    });
+    Object.keys(alphaMap).forEach(word => {
+        raw = raw.replace(new RegExp(`\\b${word}\\b`, 'g'), alphaMap[word]);
+    });
+
     const isPromotion = raw.includes("promote");
 
-    // 1. Replace word-numbers (six -> 6)
-    Object.keys(numberMap).forEach(word => {
-        const regex = new RegExp(`\\b${word}\\b`, 'g');
-        raw = raw.replace(regex, numberMap[word]);
-    });
+    // 2. Cleanup noise but keep letters/numbers together
+    let condensed = raw.replace(/\b(move|the|to|piece|square|takes|castle|castles|promote)\b/g, "");
+    condensed = condensed.replace(/\s+/g, "");
 
-    // 3. Replace phonetic letters (alpha -> a)
-    Object.keys(alphaMap).forEach(word => {
-        const regex = new RegExp(`\\b${word}\\b`, 'g');
-        raw = raw.replace(regex, alphaMap[word]);
-    });
-
-    // 4. Remove "noise" and spaces
-    // We keep letters and numbers only
-    let condensed = raw.replace(/move|the|to|piece|square|takes|castle|castles|promote\s/g, "");
-
-    // 2. THE FIX: Handle the "8" vs "H" ambiguity
     // If we see an '8' followed by a number (e.g., '83'),
     // it's actually the H-file (e.g., 'h3').
     condensed = condensed.replace(/8(?=[1-8])/g, 'h');
     condensed = condensed.replaceAll(" ", "");
 
-    console.log('1. Condensed input:', condensed);
+    // 3. Coordinate Extraction (e.g., "a8", "b1b4")
+    // We do this BEFORE the H-fix to protect valid ranks like a8
+    const coordMatches = condensed.match(/[a-h][1-8]/g);
 
-    // 5. Extract Destination (Matches a letter followed by a digit)
-    const match = condensed.match(/[a-h][1-8]/);
-    if (!match) {
-        console.log("❌ No coordinate found in:", condensed);
-        return null;
+    let fromSquare = null;
+    let targetSquare = null;
+
+    if (coordMatches && coordMatches.length >= 2) {
+        fromSquare = coordMatches[0];
+        targetSquare = coordMatches[1];
+    } else if (coordMatches && coordMatches.length === 1) {
+        targetSquare = coordMatches[0];
     }
 
-    if (condensed.charAt(0) === "8") {
-        condensed = "h" + condensed.slice(1);
+    let fromFile = "";
+    if (!fromSquare) {
+        // Look for a standalone file letter for disambiguation (e.g., "a pawn to a8")
+        const fileMatch = raw.match(/\b([a-h])\b/);
+        if (fileMatch && (!targetSquare || fileMatch[1] !== targetSquare[0])) {
+            fromFile = fileMatch[1];
+        }
     }
 
-    const fileRegex = condensed.match(/^([a-h])(?=pawn|knight|bishop|rook|queen|king|horse)/i);
-    const fromFile = fileRegex ? fileRegex[1] : "";
-    console.log('2. fromFile:', fromFile);
-
-    let targetSquare = match[0];
-    console.log('✅ Found targetSquare:', targetSquare);
-
-    // 5. Extract Piece
+    // 5. Piece Selection
     let piece = "p"; // Default to pawn
 
-    // NEW: Extract Promotion Piece
+    // CRITICAL FIX: If it's a promotion, the moving piece MUST be a pawn.
+    // We only look for other pieces if 'promote' was NOT said.
+    if (!isPromotion) {
+        if (raw.match(/\b(knight|night|horse)\b/)) piece = "n";
+        else if (raw.includes("bishop")) piece = "b";
+        else if (raw.includes("rook") || raw.includes("tower")) piece = "r";
+        else if (raw.includes("queen")) piece = "q";
+        else if (raw.includes("king")) piece = "k";
+    }
+
+    // 6. Promotion Piece Detection
     let promotion = null;
     if (isPromotion) {
-        // We look specifically at the end of the raw string or after the target square
         if (raw.includes("queen")) promotion = "q";
         else if (raw.includes("knight") || raw.includes("horse")) promotion = "n";
         else if (raw.includes("rook")) promotion = "r";
         else if (raw.includes("bishop")) promotion = "b";
-        else promotion = "q"; // Default to Queen if "promote" was said but no piece was specified
-    } else {
-        // When it's not a promotion, we extract the piece normally
-        if (condensed.includes("knight") || condensed.includes("night") || condensed.includes("horse")) piece = "N";
-        else if (condensed.includes("bishop")) piece = "B";
-        else if (condensed.includes("rook") || condensed.includes("tower")) piece = "R";
-        else if (condensed.includes("queen")) piece = "Q";
-        else if (condensed.includes("king")) piece = "K";
+        else promotion = "q"; // Standard default
     }
 
-    piece = piece.toLowerCase();
-    targetSquare = targetSquare.toLowerCase();
+    if (!targetSquare) return null;
 
-    return {piece, targetSquare, fromFile, promotion};
+    return {
+        piece: piece.toLowerCase(),
+        targetSquare: targetSquare.toLowerCase(),
+        fromSquare: fromSquare,
+        fromFile: fromFile,
+        promotion: promotion
+    };
 }
 
 /**
