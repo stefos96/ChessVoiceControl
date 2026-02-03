@@ -38,13 +38,23 @@ const alphaMap = {
 };
 
 // content.js (MAIN)
-let settings = {autoConfirm: false, enableTTS: true};
+let settings = {autoConfirm: false, enableTTS: true, enableVoice: true};
 
 // 1. Setup the listener first
 window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
     const newSettings = event.detail;
     if (newSettings.autoConfirm !== undefined) settings.autoConfirm = newSettings.autoConfirm;
     if (newSettings.enableTTS !== undefined) settings.enableTTS = newSettings.enableTTS;
+
+    if (newSettings.enableVoice !== undefined) {
+        settings.enableVoice = newSettings.enableVoice;
+
+        if (!settings.enableVoice) {
+            hideHUD();
+        } else {
+            showHUD();
+        }
+    }
 });
 
 // 2. Immediate request for settings
@@ -104,6 +114,9 @@ function updateBoard() {
 
 // 3. VOSK VOICE COMMAND PROCESSING
 function handleVoiceCommand(text) {
+    // If the user toggled voice off in the popup, stop here.
+    if (!settings.enableVoice) return;
+
     const lowerText = text.toLowerCase().trim();
 
     // --- State: Confirmation ---
@@ -257,10 +270,11 @@ async function initVosk() {
                 }
             });
 
-            console.log("✅ Vosk 0.0.8 is LIVE and listening!");
-            updateHUD("System Live - Listening...", 'success');
-            speak("Voice system ready.");
-
+            if (settings.enableVoice) {
+                console.log("✅ Vosk 0.0.8 is LIVE and listening!");
+                updateHUD("System Live - Listening...", 'success');
+                speak("Voice system ready.");
+            }
         } catch (err) {
             console.error("Vosk Initialization Error:", err);
             // If you still get 'Failed to fetch', use the Blob/Base64 trick from earlier
@@ -451,6 +465,18 @@ function updateHUD(text, type = 'neutral') {
     if (type === 'success') hudElement.style.borderColor = '#81b64c'; // Green
     if (type === 'error') hudElement.style.borderColor = '#fa4343';   // Red
     if (type === 'parsing') hudElement.style.borderColor = '#ffaa00'; // Orange
+}
+
+function hideHUD() {
+    if (!hudElement) return;
+
+    hudElement.classList.add('hide');
+}
+
+function showHUD() {
+    if (!hudElement) return;
+
+    hudElement.classList.remove('hide');
 }
 
 // Initialize HUD on load

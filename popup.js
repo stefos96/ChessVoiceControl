@@ -3,16 +3,19 @@ console.log('Popup script loaded');
 
 const autoConfirm = document.getElementById('autoConfirm');
 const enableTTS = document.getElementById('enableTTS');
+const enableVoice = document.getElementById('enableVoice');
 
 // Load saved settings
-chrome.storage.sync.get(['autoConfirm', 'enableTTS'], (result) => {
+chrome.storage.sync.get(['autoConfirm', 'enableTTS', 'enableVoice'], (result) => {
     autoConfirm.checked = result.autoConfirm || false;
     enableTTS.checked = result.enableTTS !== false;
+    enableVoice.checked = result.enableVoice !== false;
 });
 
 // Save on change - Fixed the listener assignments
 autoConfirm.addEventListener('change', () => saveAndNotify('autoConfirm', autoConfirm.checked));
 enableTTS.addEventListener('change', () => saveAndNotify('enableTTS', enableTTS.checked)); // Fixed key here
+enableVoice.addEventListener('change', () => saveAndNotify('enableVoice', enableVoice.checked)); // Fixed key here
 
 function saveAndNotify(key, value) {
     const data = {};
