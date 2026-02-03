@@ -45,11 +45,9 @@ window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
     const newSettings = event.detail;
     if (newSettings.autoConfirm !== undefined) settings.autoConfirm = newSettings.autoConfirm;
     if (newSettings.enableTTS !== undefined) settings.enableTTS = newSettings.enableTTS;
-    console.log("📥 Main World settings updated:", settings);
 });
 
 // 2. Immediate request for settings
-console.log("📡 Content script requesting settings...");
 window.dispatchEvent(new CustomEvent('REQUEST_CHESS_SETTINGS'));
 
 // 3. Backup request after 500ms (to ensure bridge.js is awake)
@@ -106,7 +104,6 @@ function updateBoard() {
 
 // 3. VOSK VOICE COMMAND PROCESSING
 function handleVoiceCommand(text) {
-    console.log("🎤 Vosk heard:", text);
     const lowerText = text.toLowerCase().trim();
 
     // --- State: Confirmation ---
