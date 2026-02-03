@@ -158,9 +158,14 @@ function handleVoiceCommand(text) {
         );
 
         if (castleMove) {
-            pendingMove = castleMove;
-            isAwaitingConfirmation = true;
-            speak(`Castle ${isQueenside ? "queenside" : "kingside"}?`);
+            if (settings.autoConfirm) {
+                chessGame.move({...castleMove, userGenerated: true});
+            } else {
+                pendingMove = castleMove;
+                isAwaitingConfirmation = true;
+                speak(`Castle ${isQueenside ? "queenside" : "kingside"}?`);
+            }
+
             return; // Exit so we don't run normal parsing
         } else {
             speak("Castling is not legal in this position.");
