@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Chess Voice Controller",
-  "version": "1.6",
+  "name": "VocalChess: Voice Control for Chess.com",
+  "version": "1.7",
   "permissions": ["audioCapture", "storage", "activeTab"],
   "action": {
     "default_popup": "popup.html"
