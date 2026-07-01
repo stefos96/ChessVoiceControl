@@ -1,7 +1,11 @@
 console.log("Chess.com Board State Logger + Vosk Initialized");
 
-const synth = window.speechSynthesis;
-let selectedVoice = null;
+const PIPER_VOICE_ID = 'en_GB-northern_english_male-medium';
+let piperModulePromise = null;
+let piperSessionPromise = null;
+let currentTtsAudio = null;
+let currentTtsUrl = null;
+let ttsGeneration = 0;
 let boardArray = [];
 
 let isAwaitingConfirmation = false;
@@ -45,7 +49,13 @@ let settings = {autoConfirm: false, enableTTS: true, enableVoice: true};
 window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
     const newSettings = event.detail;
     if (newSettings.autoConfirm !== undefined) settings.autoConfirm = newSettings.autoConfirm;
-    if (newSettings.enableTTS !== undefined) settings.enableTTS = newSettings.enableTTS;
+    if (newSettings.enableTTS !== undefined) {
+        settings.enableTTS = newSettings.enableTTS;
+        if (!settings.enableTTS) {
+            ttsGeneration++;
+            stopCurrentTtsAudio();
+        }
+    }
 
     if (newSettings.enableVoice !== undefined) {
         settings.enableVoice = newSettings.enableVoice;
@@ -66,25 +76,81 @@ setTimeout(() => {
     window.dispatchEvent(new CustomEvent('REQUEST_CHESS_SETTINGS'));
 }, 500);
 
-// 1. VOICE SYNTHESIS SETUP
-function loadBestVoice() {
-    const voices = window.speechSynthesis.getVoices();
-    selectedVoice = voices.find(v => v.name === 'Google US English') ||
-        voices.find(v => v.name.includes('Natural')) ||
-        voices.find(v => v.lang === 'en-US');
+// 1. PIPER VOICE SYNTHESIS SETUP
+function getExtensionBasePath() {
+    return document.documentElement.getAttribute('data-ext-path');
 }
 
-window.speechSynthesis.onvoiceschanged = loadBestVoice;
-loadBestVoice();
+async function loadPiperModule() {
+    if (!piperModulePromise) {
+        const basePath = getExtensionBasePath();
+        if (!basePath) throw new Error('Extension base path is not available.');
+        piperModulePromise = import(basePath + 'lib/piper/piper-tts-web.js');
+    }
+    return piperModulePromise;
+}
+
+async function getPiperSession() {
+    if (!piperSessionPromise) {
+        const basePath = getExtensionBasePath();
+        if (!basePath) throw new Error('Extension base path is not available.');
+
+        piperSessionPromise = loadPiperModule().then(({TtsSession}) => TtsSession.create({
+            voiceId: PIPER_VOICE_ID,
+            wasmPaths: {
+                onnxWasm: basePath + 'lib/onnx/',
+                piperData: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.data',
+                piperWasm: 'https://cdn.jsdelivr.net/npm/@diffusionstudio/piper-wasm@1.0.0/build/piper_phonemize.wasm',
+            },
+            logger: (message) => console.debug('[Piper TTS]', message),
+            progress: (progress) => {
+                if (progress.total) {
+                    const percent = Math.round((progress.loaded * 100) / progress.total);
+                    console.debug(`[Piper TTS] Downloading voice: ${percent}%`);
+                }
+            },
+        }));
+    }
+
+    return piperSessionPromise;
+}
+
+function stopCurrentTtsAudio() {
+    if (currentTtsAudio) {
+        currentTtsAudio.pause();
+        currentTtsAudio.removeAttribute('src');
+        currentTtsAudio.load();
+        currentTtsAudio = null;
+    }
+
+    if (currentTtsUrl) {
+        URL.revokeObjectURL(currentTtsUrl);
+        currentTtsUrl = null;
+    }
+}
+
+async function playPiperSpeech(text, generation) {
+    try {
+        const session = await getPiperSession();
+        const wav = await session.predict(text);
+        if (generation !== ttsGeneration || !settings.enableTTS) return;
+
+        stopCurrentTtsAudio();
+        currentTtsUrl = URL.createObjectURL(wav);
+        currentTtsAudio = new Audio(currentTtsUrl);
+        currentTtsAudio.onended = stopCurrentTtsAudio;
+        currentTtsAudio.onerror = stopCurrentTtsAudio;
+        await currentTtsAudio.play();
+    } catch (error) {
+        console.error('[Piper TTS] Speech synthesis failed:', error);
+    }
+}
 
 function speak(text) {
-    if (settings.enableTTS) {
-        if (synth.speaking) synth.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        if (selectedVoice) utterance.voice = selectedVoice;
-        utterance.rate = 1.1;
-        synth.speak(utterance);
-    }
+    if (!settings.enableTTS || !text) return;
+    const generation = ++ttsGeneration;
+    stopCurrentTtsAudio();
+    void playPiperSpeech(text, generation);
 }
 
 // 2. BOARD LOGIC
