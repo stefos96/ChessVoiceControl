@@ -439,11 +439,8 @@ function createSpeechHUD() {
 
     // Styling the bubble to match Chess.com's dark theme
     Object.assign(hudElement.style, {
-        position: 'fixed',
-        bottom: '20px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        padding: '12px 20px',
+        padding: '5px 20px',
+        marginLeft: '20px',
         backgroundColor: 'rgba(38, 36, 33, 0.95)',
         color: '#bababa',
         borderRadius: '25px',
@@ -451,7 +448,7 @@ function createSpeechHUD() {
         fontFamily: 'sans-serif',
         zIndex: '10000',
         border: '2px solid #81b64c',
-        boxShadow: '0 4px 15px rgba(0,0,0,0.5)',
+        boxShadow: 'rgba(0, 0, 0, 0.5) 0px 0px 10px 0px',
         transition: 'all 0.3s ease',
         display: 'flex',
         alignItems: 'center',
@@ -460,7 +457,7 @@ function createSpeechHUD() {
     });
 
     hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
-    document.body.appendChild(hudElement);
+    document.querySelector('#player-bottom .player-row-wrapper').appendChild(hudElement);
 }
 
 function updateHUD(text, type = 'neutral') {
