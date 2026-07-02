@@ -501,8 +501,7 @@ function createSpeechHUD() {
     if (anchor) {
         anchor.appendChild(hudElement);
     } else {
-        hudElement.style.position = 'absolute';
-        hudElement.style.bottom = '60px';
+        hudElement.style.margin = '0';
 
         // it's a puzzle
         let counter = 10;
@@ -510,6 +509,9 @@ function createSpeechHUD() {
             let anchor = document.querySelector('.rated-sidebar-clock-and-rating');
 
             if (anchor) {
+                anchor.style.flexDirection = 'column-reverse';
+                anchor.style.gap = '30px';
+
                 anchor.appendChild(hudElement);
                 clearInterval(interval);
             } else if (counter <= 0) {
