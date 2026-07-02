@@ -39,13 +39,14 @@ const alphaMap = {
 };
 
 // content.js (MAIN)
-let settings = {autoConfirm: false, enableTTS: true, enableVoice: true};
+let settings = {autoConfirm: false, enableTTS: true, enableVoice: true, autoNextPuzzle: false};
 
 // 1. Setup the listener first
 window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
     const newSettings = event.detail;
     if (newSettings.autoConfirm !== undefined) settings.autoConfirm = newSettings.autoConfirm;
     if (newSettings.enableTTS !== undefined) settings.enableTTS = newSettings.enableTTS;
+    if (newSettings.autoNextPuzzle !== undefined) settings.autoNextPuzzle = newSettings.autoNextPuzzle;
 
     if (newSettings.enableVoice !== undefined) {
         settings.enableVoice = newSettings.enableVoice;
@@ -290,6 +291,26 @@ async function initVosk() {
     };
 }
 
+// Helper for detecting if we're in a puzzle
+function isPuzzlePage() {
+    return !!document.querySelector('.rated-sidebar-clock-and-rating') || window.location.href.includes('/puzzles/');
+}
+
+// Trigger next puzzle function - uses the provided function
+function triggerNextPuzzle() {
+    // Target by the primary green button classes or text content
+    const nextButton = document.querySelector('.ui_v5-button-component.ui_v5-button-primary') || 
+                       document.querySelector('.puzzles-next-button') ||
+                       Array.from(document.querySelectorAll('button')).find(el => el.textContent.includes('Next') || el.textContent.includes('Continue')) || document.querySelector('[aria-label="Next Puzzle"]');
+
+    if (nextButton) {
+        nextButton.click();
+        console.log("Advancing to next puzzle via auto-advance.");
+    } else {
+        console.log("Next puzzle button not found on screen.");
+    }
+}
+
 // 5. MAIN BOOTSTRAP
 const initInterval = setInterval(() => {
     const boardElement = document.querySelector('wc-chess-board');
@@ -304,6 +325,24 @@ const initInterval = setInterval(() => {
             // Handle TTS for opponent/own moves
             if (event?.data?.move?.san) {
                 speak(translateMoveToSpeech(event.data.move.san));
+            }
+
+            // Auto-advance to next puzzle if enabled and puzzle is finished
+            if (settings.autoNextPuzzle && isPuzzlePage()) {
+                // Check if the game is over or if we need to wait for puzzle completion UI
+
+
+                setTimeout(() => {
+                    // Add a small delay to ensure puzzle completion is registered
+                    const redoButton = document.querySelector('[aria-label="Retry"].cc-button-danger');
+                    const isPuzzleFalse = redoButton != null;
+
+                    if (isPuzzleFalse) { // Check if button is visible
+                        redoButton.click();
+                    } else {
+                        triggerNextPuzzle();
+                    }
+                }, 1200);
             }
         });
 

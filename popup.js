@@ -4,18 +4,21 @@ console.log('Popup script loaded');
 const autoConfirm = document.getElementById('autoConfirm');
 const enableTTS = document.getElementById('enableTTS');
 const enableVoice = document.getElementById('enableVoice');
+const autoNextPuzzle = document.getElementById('autoNextPuzzle');
 
 // Load saved settings
-chrome.storage.sync.get(['autoConfirm', 'enableTTS', 'enableVoice'], (result) => {
+chrome.storage.sync.get(['autoConfirm', 'enableTTS', 'enableVoice', 'autoNextPuzzle'], (result) => {
     autoConfirm.checked = result.autoConfirm || false;
     enableTTS.checked = result.enableTTS !== false;
     enableVoice.checked = result.enableVoice !== false;
+    autoNextPuzzle.checked = result.autoNextPuzzle || false;
 });
 
 // Save on change - Fixed the listener assignments
 autoConfirm.addEventListener('change', () => saveAndNotify('autoConfirm', autoConfirm.checked));
 enableTTS.addEventListener('change', () => saveAndNotify('enableTTS', enableTTS.checked)); // Fixed key here
 enableVoice.addEventListener('change', () => saveAndNotify('enableVoice', enableVoice.checked)); // Fixed key here
+autoNextPuzzle.addEventListener('change', () => saveAndNotify('autoNextPuzzle', autoNextPuzzle.checked));
 
 function saveAndNotify(key, value) {
     const data = {};
