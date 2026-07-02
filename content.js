@@ -457,7 +457,30 @@ function createSpeechHUD() {
     });
 
     hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
-    document.querySelector('#player-bottom .player-row-wrapper').appendChild(hudElement);
+
+    let anchor = document.querySelector('#player-bottom .player-row-wrapper');
+    if (anchor) {
+        anchor.appendChild(hudElement);
+    } else {
+        hudElement.style.position = 'absolute';
+        hudElement.style.bottom = '60px';
+
+        // it's a puzzle
+        let counter = 10;
+        let interval = setInterval(() => {
+            let anchor = document.querySelector('.rated-sidebar-clock-and-rating');
+
+            if (anchor) {
+                anchor.appendChild(hudElement);
+                clearInterval(interval);
+            } else if (counter <= 0) {
+                clearInterval(interval);
+            }
+
+            counter--;
+        }, 200)
+
+    }
 }
 
 function updateHUD(text, type = 'neutral') {
