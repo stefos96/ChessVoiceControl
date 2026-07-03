@@ -59,6 +59,10 @@ window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
     }
 });
 
+window.addEventListener('TOGGLE_CHESS_POPUP_DOM', () => {
+    toggleSettingsPopup();
+});
+
 // 2. Immediate request for settings
 window.dispatchEvent(new CustomEvent('REQUEST_CHESS_SETTINGS'));
 
@@ -282,10 +286,12 @@ async function initVosk() {
             if (settings.enableVoice) {
                 console.log("✅ Vosk 0.0.8 is LIVE and listening!");
                 updateHUD("System Live - Listening...", 'success');
+                updateModelStatus('Ready');
                 speak("Voice system ready.");
             }
         } catch (err) {
             console.error("Vosk Initialization Error:", err);
+            updateModelStatus('Error');
             // If you still get 'Failed to fetch', use the Blob/Base64 trick from earlier
         }
     };
@@ -492,7 +498,7 @@ function createSpeechHUD() {
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
-        pointerEvents: 'none'
+        userSelect: 'none',
     });
 
     hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
@@ -550,3 +556,238 @@ function showHUD() {
 
 // Initialize HUD on load
 createSpeechHUD();
+
+// ============================================
+// DOM-BASED SETTINGS POPUP
+// ============================================
+
+let settingsPopupElement = null;
+let modelStatus = 'Loading...';
+
+function createSettingsPopup() {
+    const overlay = document.createElement('div');
+    overlay.id = 'chess-voice-settings-overlay';
+    Object.assign(overlay.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(0, 0, 0, 0)',
+        zIndex: '20000',
+        display: 'flex',
+        justifyContent: 'flex-end',
+        alignItems: 'flex-start',
+        fontFamily: 'sans-serif',
+        padding: '20px',
+    });
+
+    const popup = document.createElement('div');
+    popup.id = 'chess-voice-settings-popup';
+    Object.assign(popup.style, {
+        backgroundColor: '#262421',
+        color: '#bababa',
+        borderRadius: '8px',
+        padding: '20px',
+        width: '300px',
+        maxHeight: '80vh',
+        overflow: 'hidden',
+        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.8)',
+        border: '2px solid #81b64c',
+        zIndex: '20001',
+        position: 'relative'
+    });
+
+    const coffeeUrl = "https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png";
+    const queenImg = "https://raw.githubusercontent.com/stefos96/ChessVoiceControl/refs/heads/master/icons/queen.png";
+
+    popup.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <h2 style="color: #81b64c; font-size: 16px; margin: 0; border-bottom: none; padding-bottom: 0;">Vocal Chess Settings</h2>
+            <button id="chess-voice-close-btn" style="background: none; border: none; color: #81b64c; font-size: 20px; cursor: pointer; padding: 0; width: 30px; height: 30px;">✕</button>
+        </div>
+
+        <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div>Auto-Confirm</div>
+            <input type="checkbox" id="settingsAutoConfirm" style="cursor: pointer; accent-color: #81b64c; box-shadow: 0 0 7px 4px #262421;">
+        </div>
+
+        <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div>Enable TTS</div>
+            <input type="checkbox" id="settingsEnableTTS" style="cursor: pointer; accent-color: #81b64c; box-shadow: 0 0 7px 4px #262421;">
+        </div>
+
+        <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div>Enable Voice Input</div>
+            <input type="checkbox" id="settingsEnableVoice" style="cursor: pointer; accent-color: #81b64c; box-shadow: 0 0 7px 4px #262421;">
+        </div>
+
+        <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+            <div>Auto Next Puzzle</div>
+            <input type="checkbox" id="settingsAutoNextPuzzle" style="cursor: pointer; accent-color: #81b64c; box-shadow: 0 0 7px 4px #262421;">
+        </div>
+
+        <div style="color: #7f7f7f; font-size: 12px; background: #262421c7; padding: 3px; border-radius: 10px;">Automatically next puzzle if correct and redo if it was wrong</div>
+
+        <details style="background: rgb(49 46 43 / 0.55); border-radius: 4px; margin-top: 15px; border: 1px solid #444;">
+            <summary style="padding: 8px; cursor: pointer; color: #81b64c; font-weight: bold; font-size: 13px; outline: none;">Voice Commands Help</summary>
+            <div style="padding: 0 10px 10px 10px; font-size: 12px; line-height: 1.6;">
+                <b style="color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444;">Basic Moves</b>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Rook d8", "Knight f3", "e4"</div>
+
+                <b style="color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444;">Disambiguation</b>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Rook h 1 to g 1"</div>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Eight rook to g 1"</div>
+
+                <b style="color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444;">Castling</b>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Castle kingside" / "Short"</div>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Castle queenside" / "Long"</div>
+
+                <b style="color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444;">Promotion</b>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Promote a 8 queen"</div>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Promote b 8 knight"</div>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Promote a 8 (queen automatically)"</div>
+
+                <b style="color: #fff; display: block; margin-top: 8px; border-bottom: 1px solid #444;">Confirmation</b>
+                <div style="padding-left: 4px; color: #d3d3d3;">"Yes", "Confirm", "No", "Cancel"</div>
+            </div>
+        </details>
+
+        <div style="font-size: 11px; color: #777; border-top: 1px solid #444; padding-top: 8px; margin-top: 15px;">
+            Vosk Model: <span id="settingsModelStatus" style="color:#81b64c;">${modelStatus}</span>
+        </div>
+
+        <div style="margin-top: 15px; text-align: center;">
+            <a href="https://buymeacoffee.com/stefanoskarakasis" target="_blank" style="text-decoration: none;">
+                <img src="${coffeeUrl}" alt="Buy Me A Coffee" style="height: 35px !important; width: 130px !important;">
+            </a>
+        </div>
+        
+        <img src="${queenImg}" alt="queen-image" style="height: auto; width: 100%; position: absolute; bottom: 0; right: -40%; z-index: -2;">
+    `;
+
+    overlay.appendChild(popup);
+    document.body.appendChild(overlay);
+
+    // Close button handler
+    document.getElementById('chess-voice-close-btn').addEventListener('click', toggleSettingsPopup);
+
+    // Click outside to close
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) toggleSettingsPopup();
+    });
+
+    // Prevent escape key from closing (optional - can be enabled)
+    overlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            toggleSettingsPopup();
+        }
+    });
+
+    settingsPopupElement = overlay;
+
+    // Load and bind settings
+    loadSettingsToPopup();
+    bindSettingsCheckboxes();
+}
+
+function toggleSettingsPopup() {
+    if (settingsPopupElement) {
+        settingsPopupElement.remove();
+        settingsPopupElement = null;
+    } else {
+        createSettingsPopup();
+    }
+}
+
+function loadSettingsToPopup() {
+    // Rely on the live in-memory settings content.js already maintains
+    document.getElementById('settingsAutoConfirm').checked = settings.autoConfirm || false;
+    document.getElementById('settingsEnableTTS').checked = settings.enableTTS !== false;
+    document.getElementById('settingsEnableVoice').checked = settings.enableVoice !== false;
+    document.getElementById('settingsAutoNextPuzzle').checked = settings.autoNextPuzzle || false;
+
+    // Update model status
+    const el = document.getElementById('settingsModelStatus');
+    if (el) el.textContent = modelStatus;
+}
+
+function bindSettingsCheckboxes() {
+    const autoConfirm = document.getElementById('settingsAutoConfirm');
+    const enableTTS = document.getElementById('settingsEnableTTS');
+    const enableVoice = document.getElementById('settingsEnableVoice');
+    const autoNextPuzzle = document.getElementById('settingsAutoNextPuzzle');
+
+    autoConfirm.addEventListener('change', () => saveAndNotify('autoConfirm', autoConfirm.checked));
+    enableTTS.addEventListener('change', () => saveAndNotify('enableTTS', enableTTS.checked));
+    enableVoice.addEventListener('change', () => saveAndNotify('enableVoice', enableVoice.checked));
+    autoNextPuzzle.addEventListener('change', () => saveAndNotify('autoNextPuzzle', autoNextPuzzle.checked));
+}
+
+// content.js
+function saveAndNotify(key, value) {
+    // 1. Instantly update local memory so the UI feels snappy
+    settings[key] = value;
+
+    // 2. Dispatch a CustomEvent to let bridge.js save it into actual extension storage
+    window.dispatchEvent(new CustomEvent('SAVE_CHESS_SETTING', {
+        detail: { key: key, value: value }
+    }));
+
+    // 3. Fire your existing handler to immediately toggle UI states (like HUD visibility)
+    window.dispatchEvent(new CustomEvent('CHESS_VOICE_SETTINGS', {
+        detail: { [key]: value }
+    }));
+}
+
+function updateModelStatus(status) {
+    modelStatus = status;
+    const el = document.getElementById('settingsModelStatus');
+    if (el) el.textContent = status;
+}
+
+// Create settings button/icon in HUD area
+function addSettingsButton() {
+    const btn = document.createElement('button');
+    btn.id = 'chess-voice-settings-btn';
+    btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" data-glyph="utility-cogwheel" aria-hidden="true" viewBox="0 0 24 24"><path fill="#73a045" d="M9.57,20.53 l-1.17,1.27 c-0.37,0.4,-0.67,0.43,-1.13,0.17 l-1.53,-0.87 c-0.47,-0.27,-0.57,-0.57,-0.43,-1.07 l0.53,-1.67 c0.13,-0.5,0.1,-0.87,-0.17,-1.33 l-1.17,-2.07 c-0.27,-0.47,-0.57,-0.67,-1.07,-0.8 l-1.73,-0.4 c-0.5,-0.13,-0.7,-0.37,-0.7,-0.9 l0,-1.77 c0,-0.5,0.2,-0.73,0.7,-0.87 l1.73,-0.4 c0.5,-0.13,0.8,-0.33,1.07,-0.8 l1.17,-2.07 c0.27,-0.47,0.3,-0.83,0.17,-1.33 l-0.53,-1.67 c-0.13,-0.5,-0.03,-0.8,0.43,-1.07 l1.53,-0.87 c0.47,-0.27,0.77,-0.23,1.13,0.17 l1.17,1.27 c0.37,0.4,0.7,0.53,1.23,0.53 l2.43,0 c0.5,0,0.83,-0.13,1.2,-0.53 l1.17,-1.27 c0.37,-0.4,0.67,-0.43,1.13,-0.17 l1.53,0.87 c0.47,0.27,0.57,0.57,0.43,1.07 l-0.53,1.67 c-0.13,0.5,-0.1,0.87,0.17,1.33 l1.17,2.07 c0.27,0.47,0.57,0.67,1.07,0.8 l1.73,0.4 c0.5,0.13,0.7,0.37,0.7,0.87 l0,1.77 c0,0.53,-0.2,0.77,-0.7,0.9 l-1.73,0.4 c-0.5,0.13,-0.8,0.33,-1.07,0.8 l-1.17,2.07 c-0.27,0.47,-0.3,0.83,-0.17,1.33 l0.53,1.67 c0.13,0.5,0.03,0.8,-0.43,1.07 l-1.53,0.87 c-0.47,0.27,-0.77,0.23,-1.13,-0.17 l-1.17,-1.27 c-0.37,-0.4,-0.7,-0.53,-1.2,-0.53 l-2.43,0 c-0.53,0,-0.87,0.13,-1.23,0.53 Z M12.03,15.5 c1.9,0,3.5,-1.57,3.5,-3.53 c0,-1.9,-1.6,-3.47,-3.5,-3.47 c-1.93,0,-3.5,1.57,-3.5,3.47 c0,1.97,1.57,3.53,3.5,3.53 Z M12.03,15.5"></path></svg>';
+    Object.assign(btn.style, {
+        width: '25px',
+        height: '25px',
+        borderRadius: '50%',
+        border: 'none',
+        color: '#262421',
+        fontSize: '15px',
+        cursor: 'pointer',
+        transition: 'all 0.1s',
+        zIndex: '10001',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxSizing: 'border-box',
+        background: '#101010'
+    });
+
+    btn.addEventListener('mouseover', () => btn.style.transform = 'scale(.9)');
+    btn.addEventListener('mouseout', () => btn.style.transform = 'scale(1)');
+    btn.addEventListener('click', toggleSettingsPopup);
+
+    const voiceHud = document.querySelector('#chess-voice-hud');
+    voiceHud.appendChild(btn);
+}
+
+// Keyboard shortcut: Alt + S to toggle settings
+document.addEventListener('keydown', (e) => {
+    if ((e.altKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        toggleSettingsPopup();
+    }
+});
+
+// Add settings button when page loads
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', addSettingsButton);
+} else {
+    addSettingsButton();
+}
