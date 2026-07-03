@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VocalChess: Voice Control for Chess.com",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Control Chess.com games hands-free with voice commands. All audio processing happens locally on your device.",
   "icons": {
     "16": "icons/icon16.png",
