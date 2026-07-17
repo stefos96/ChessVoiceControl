@@ -8,7 +8,7 @@
 console.log("Bridge Script Active");
 
 function relayToMain() {
-    chrome.storage.sync.get(['autoConfirm', 'enableTTS', 'enableVoice', 'autoNextPuzzle'], (result) => {
+    chrome.storage.sync.get(['autoConfirm', 'enableTTS', 'enableVoice', 'autoNextPuzzle', 'selectedMicrophoneId'], (result) => {
         window.dispatchEvent(new CustomEvent('CHESS_VOICE_SETTINGS', { detail: result }));
     });
 }

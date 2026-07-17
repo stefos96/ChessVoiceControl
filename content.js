@@ -48,7 +48,11 @@ const alphaMap = {
 };
 
 // content.js (MAIN)
-let settings = {autoConfirm: false, enableTTS: true, enableVoice: true, autoNextPuzzle: false};
+let settings = {autoConfirm: false, enableTTS: true, enableVoice: true, autoNextPuzzle: false, selectedMicrophoneId: ''};
+let voskStream = null;
+let voskAudioContext = null;
+let voskRecognizer = null;
+let lastMicrophoneDeviceId = null;
 
 // 1. Setup the listener first
 window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
@@ -64,6 +68,24 @@ window.addEventListener('CHESS_VOICE_SETTINGS', (event) => {
             hideHUD();
         } else {
             showHUD();
+        }
+    }
+
+    if (newSettings.selectedMicrophoneId !== undefined) {
+        const newDeviceId = newSettings.selectedMicrophoneId;
+        settings.selectedMicrophoneId = newDeviceId;
+        console.log("🎤 Microphone device changed from:", lastMicrophoneDeviceId, "to:", newDeviceId);
+        
+        // Check if device actually changed
+        if (lastMicrophoneDeviceId !== newDeviceId) {
+            lastMicrophoneDeviceId = newDeviceId;
+            // Restart vosk with the new device
+            if (settings.enableVoice && voskRecognizer) {
+                console.log('🔄 Restarting Vosk with new device...');
+                restartVosk();
+            } else {
+                console.log('⚠️ Cannot restart Vosk yet - enableVoice:', settings.enableVoice, 'voskRecognizer:', !!voskRecognizer);
+            }
         }
     }
 });
@@ -250,31 +272,48 @@ async function initVosk() {
 
             const model = await Vosk.createModel(modelPath);
             // 0.0.8 requires the sample rate (16000) here
-            const recognizer = new model.KaldiRecognizer(16000, JSON.stringify(chessGrammar));
+            voskRecognizer = new model.KaldiRecognizer(16000, JSON.stringify(chessGrammar));
 
-            // 1. Get the Microphone
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    channelCount: 1,
-                    sampleRate: 16000,
-                },
-            });
+            // 1. Get the Microphone - use selected device
+            const audioConstraints = {
+                echoCancellation: true,
+                noiseSuppression: true,
+                channelCount: 1,
+                sampleRate: 16000,
+            };
+
+            // Use the selected device ID
+            if (settings.selectedMicrophoneId) {
+                audioConstraints.deviceId = { exact: settings.selectedMicrophoneId };
+                console.log("🎤 Using microphone device ID:", settings.selectedMicrophoneId);
+            } else {
+                console.error("❌ No microphone device selected");
+                throw new Error("No microphone device selected");
+            }
+
+            try {
+                voskStream = await navigator.mediaDevices.getUserMedia({
+                    audio: audioConstraints,
+                });
+                console.log("✅ Stream acquired successfully from device:", settings.selectedMicrophoneId);
+            } catch (err) {
+                console.error("❌ Failed to get media stream with device:", settings.selectedMicrophoneId, err);
+                throw err;
+            }
 
             // 2. Setup the Audio Context
             // We force 16000Hz to match the Vosk model's requirement
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
-            const source = audioContext.createMediaStreamSource(stream);
+            voskAudioContext = new (window.AudioContext || window.webkitAudioContext)({sampleRate: 16000});
+            const source = voskAudioContext.createMediaStreamSource(voskStream);
 
             // 3. Create a Processor Node (The bridge to Vosk)
             // Buffer size 4096, 1 input channel, 1 output channel
-            const recognizerNode = audioContext.createScriptProcessor(4096, 1, 1);
+            const recognizerNode = voskAudioContext.createScriptProcessor(4096, 1, 1);
 
             recognizerNode.onaudioprocess = (event) => {
                 try {
                     // Send the audio buffer directly to the recognizer
-                    recognizer.acceptWaveform(event.inputBuffer);
+                    voskRecognizer.acceptWaveform(event.inputBuffer);
                 } catch (error) {
                     console.error('Vosk Processing Error:', error);
                 }
@@ -283,10 +322,10 @@ async function initVosk() {
             // 4. Connect the chain
             // Mic -> RecognizerNode -> Destination (Muted output)
             source.connect(recognizerNode);
-            recognizerNode.connect(audioContext.destination);
+            recognizerNode.connect(voskAudioContext.destination);
 
             // 5. Handle Recognition Results
-            recognizer.on("result", (message) => {
+            voskRecognizer.on("result", (message) => {
                 if (message.result && message.result.text) {
                     handleVoiceCommand(message.result.text);
                 }
@@ -304,6 +343,32 @@ async function initVosk() {
             // If you still get 'Failed to fetch', use the Blob/Base64 trick from earlier
         }
     };
+}
+
+function restartVosk() {
+    try {
+        console.log('🛑 Stopping Vosk...');
+        // Stop the current stream
+        if (voskStream) {
+            voskStream.getTracks().forEach(track => {
+                console.log('Stopping track:', track.kind, track.label);
+                track.stop();
+            });
+            voskStream = null;
+        }
+        // Close the audio context
+        if (voskAudioContext) {
+            voskAudioContext.close();
+            voskAudioContext = null;
+        }
+        voskRecognizer = null;
+        console.log('✅ Vosk stopped. Reinitializing...');
+        // Reinitialize with the new device
+        initVosk();
+    } catch (err) {
+        console.error("Error restarting Vosk:", err);
+        updateModelStatus('Error');
+    }
 }
 
 // Helper for detecting if we're in a puzzle
@@ -667,6 +732,13 @@ function createSettingsPopup() {
 
         <div style="color: #7f7f7f; font-size: 12px; background: #262421c7; padding: 3px; border-radius: 10px;">Automatically next puzzle if correct and redo if it was wrong</div>
 
+        <div style="margin-top: 15px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
+            <span>Microphone Input</span>
+            <select id="microphoneSelect" style="width: 100%; padding: 6px; background: #3b3834; color: #bababa; border: 1px solid #555; border-radius: 3px; cursor: pointer; font-size: 14px;">
+                <option value="">Loading devices...</option>
+            </select>
+        </div>
+
         <details style="background: rgb(49 46 43 / 0.55); border-radius: 4px; margin-top: 15px; border: 1px solid #444;">
             <summary style="padding: 8px; cursor: pointer; color: #81b64c; font-weight: bold; font-size: 13px; outline: none;">Voice Commands Help</summary>
             <div style="padding: 0 10px 10px 10px; font-size: 12px; line-height: 1.6;">
@@ -746,9 +818,68 @@ function loadSettingsToPopup() {
     document.getElementById('settingsEnableVoice').checked = settings.enableVoice !== false;
     document.getElementById('settingsAutoNextPuzzle').checked = settings.autoNextPuzzle || false;
 
+    // Load audio devices
+    loadAudioDevicesToPopup();
+
     // Update model status
     const el = document.getElementById('settingsModelStatus');
     if (el) el.textContent = modelStatus;
+}
+
+async function loadAudioDevicesToPopup() {
+    try {
+        // Request microphone permission to get device labels
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Stop the stream immediately - we just needed permission
+            stream.getTracks().forEach(track => track.stop());
+        } catch (err) {
+            console.log('Microphone permission request:', err.message);
+        }
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(device => device.kind === 'audioinput');
+        console.log('🎤 Found audio input devices:', audioInputs.length, audioInputs);
+        
+        const micSelect = document.getElementById('microphoneSelect');
+        
+        if (!micSelect) {
+            console.warn('⚠️ microphoneSelect element not found');
+            return;
+        }
+
+        // Clear existing options
+        micSelect.innerHTML = '';
+        
+        if (audioInputs.length === 0) {
+            micSelect.innerHTML = '<option value="">No microphones found</option>';
+            return;
+        }
+        
+        // Add all available microphones
+        audioInputs.forEach((device, index) => {
+            const option = document.createElement('option');
+            option.value = device.deviceId;
+            option.textContent = device.label || `Microphone ${index + 1}`;
+            micSelect.appendChild(option);
+        });
+        
+        // Select the saved microphone (or first one if none saved)
+        if (settings.selectedMicrophoneId && audioInputs.some(d => d.deviceId === settings.selectedMicrophoneId)) {
+            console.log('🎤 Setting dropdown to saved device:', settings.selectedMicrophoneId);
+            micSelect.value = settings.selectedMicrophoneId;
+        } else if (audioInputs.length > 0) {
+            // Default to first device
+            micSelect.value = audioInputs[0].deviceId;
+            console.log('🎤 No saved device, selecting first device:', audioInputs[0].deviceId);
+        }
+    } catch (error) {
+        console.error('Error enumerating audio devices:', error);
+        const micSelect = document.getElementById('microphoneSelect');
+        if (micSelect) {
+            micSelect.innerHTML = '<option value="">Error loading devices</option>';
+        }
+    }
 }
 
 function bindSettingsCheckboxes() {
@@ -756,11 +887,22 @@ function bindSettingsCheckboxes() {
     const enableTTS = document.getElementById('settingsEnableTTS');
     const enableVoice = document.getElementById('settingsEnableVoice');
     const autoNextPuzzle = document.getElementById('settingsAutoNextPuzzle');
+    const microphoneSelect = document.getElementById('microphoneSelect');
 
     autoConfirm.addEventListener('change', () => saveAndNotify('autoConfirm', autoConfirm.checked));
     enableTTS.addEventListener('change', () => saveAndNotify('enableTTS', enableTTS.checked));
     enableVoice.addEventListener('change', () => saveAndNotify('enableVoice', enableVoice.checked));
     autoNextPuzzle.addEventListener('change', () => saveAndNotify('autoNextPuzzle', autoNextPuzzle.checked));
+    
+    if (microphoneSelect) {
+        microphoneSelect.addEventListener('change', () => {
+            const selectedId = microphoneSelect.value;
+            console.log('🎤 User selected microphone:', selectedId, '(' + microphoneSelect.options[microphoneSelect.selectedIndex].text + ')');
+            saveAndNotify('selectedMicrophoneId', selectedId);
+        });
+    } else {
+        console.warn('⚠️ microphoneSelect element not found in bindSettingsCheckboxes');
+    }
 }
 
 // content.js
