@@ -1,5 +1,14 @@
 console.log("Chess.com Board State Logger + Vosk Initialized");
 
+// Guard against multiple injections of this script
+if (window.__CHESS_VOICE_INITIALIZED) {
+    console.log("Chess Voice already initialized, skipping duplicate initialization");
+} else {
+    window.__CHESS_VOICE_INITIALIZED = true;
+    initializeChessVoice();
+}
+
+function initializeChessVoice() {
 const synth = window.speechSynthesis;
 let selectedVoice = null;
 let boardArray = [];
@@ -482,10 +491,21 @@ function createSpeechHUD() {
     hudElement = document.createElement('div');
     hudElement.id = 'chess-voice-hud';
 
+    // Load saved position or use defaults
+    const savedPosition = localStorage.getItem('chess-voice-hud-position');
+    let defaultTop = '80%', defaultLeft = '50%', defaultTransform = 'translate(-50%, -50%)';
+    
+    if (savedPosition) {
+        const pos = JSON.parse(savedPosition);
+        defaultTop = pos.top;
+        defaultLeft = pos.left;
+        defaultTransform = pos.transform;
+    }
+
     Object.assign(hudElement.style, {
         position: 'fixed',
-        top: '80%', // Use absolute positions instead of bottom
-        left: '50%',
+        top: defaultTop,
+        left: defaultLeft,
         padding: '5px 20px',
         backgroundColor: 'rgba(38, 36, 33, 0.95)',
         color: '#bababa',
@@ -500,9 +520,8 @@ function createSpeechHUD() {
         gap: '10px',
         userSelect: 'none',
         cursor: 'grab',
-        // Start centered
-        transform: 'translate(-50%, -50%)',
-        whiteSpace: 'nowrap' // Prevents the text from wrapping/resizing the div
+        transform: defaultTransform,
+        whiteSpace: 'nowrap'
     });
 
     hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
@@ -535,8 +554,17 @@ function createSpeechHUD() {
     });
 
     document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
         isDragging = false;
         hudElement.style.cursor = 'grab';
+        
+        // Save the current position to localStorage
+        const position = {
+            top: hudElement.style.top,
+            left: hudElement.style.left,
+            transform: hudElement.style.transform
+        };
+        localStorage.setItem('chess-voice-hud-position', JSON.stringify(position));
     });
 }
 
@@ -803,4 +831,5 @@ if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', addSettingsButton);
 } else {
     addSettingsButton();
+}
 }
