@@ -482,10 +482,11 @@ function createSpeechHUD() {
     hudElement = document.createElement('div');
     hudElement.id = 'chess-voice-hud';
 
-    // Styling the bubble to match Chess.com's dark theme
     Object.assign(hudElement.style, {
+        position: 'fixed',
+        top: '80%', // Use absolute positions instead of bottom
+        left: '50%',
         padding: '5px 20px',
-        marginLeft: '20px',
         backgroundColor: 'rgba(38, 36, 33, 0.95)',
         color: '#bababa',
         borderRadius: '25px',
@@ -494,40 +495,49 @@ function createSpeechHUD() {
         zIndex: '10000',
         border: '2px solid #81b64c',
         boxShadow: 'rgba(0, 0, 0, 0.5) 0px 0px 10px 0px',
-        transition: 'all 0.3s ease',
         display: 'flex',
         alignItems: 'center',
         gap: '10px',
         userSelect: 'none',
+        cursor: 'grab',
+        // Start centered
+        transform: 'translate(-50%, -50%)',
+        whiteSpace: 'nowrap' // Prevents the text from wrapping/resizing the div
     });
 
     hudElement.innerHTML = `<span id="hud-icon">🎤</span> <span id="hud-text">Voice System Ready...</span>`;
+    document.body.appendChild(hudElement);
 
-    let anchor = document.querySelector('#player-bottom .player-row-wrapper');
-    if (anchor) {
-        anchor.appendChild(hudElement);
-    } else {
-        hudElement.style.margin = '0';
+    let isDragging = false;
+    let shiftX, shiftY;
 
-        // it's a puzzle
-        let counter = 10;
-        let interval = setInterval(() => {
-            let anchor = document.querySelector('.rated-sidebar-clock-and-rating');
+    hudElement.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        hudElement.style.cursor = 'grabbing';
 
-            if (anchor) {
-                anchor.style.flexDirection = 'column-reverse';
-                anchor.style.gap = '30px';
+        // Get the current position of the element
+        const rect = hudElement.getBoundingClientRect();
 
-                anchor.appendChild(hudElement);
-                clearInterval(interval);
-            } else if (counter <= 0) {
-                clearInterval(interval);
-            }
+        // Calculate the mouse position relative to the element's top-left corner
+        shiftX = e.clientX - rect.left;
+        shiftY = e.clientY - rect.top;
+    });
 
-            counter--;
-        }, 200)
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
 
-    }
+        // Move the element to the new coordinates, removing the transform
+        // We use the calculated shift to ensure the mouse stays at the same
+        // spot relative to the div throughout the drag
+        hudElement.style.left = `${e.clientX - shiftX}px`;
+        hudElement.style.top = `${e.clientY - shiftY}px`;
+        hudElement.style.transform = 'none';
+    });
+
+    document.addEventListener('mouseup', () => {
+        isDragging = false;
+        hudElement.style.cursor = 'grab';
+    });
 }
 
 function updateHUD(text, type = 'neutral') {
@@ -774,7 +784,10 @@ function addSettingsButton() {
     btn.addEventListener('click', toggleSettingsPopup);
 
     const voiceHud = document.querySelector('#chess-voice-hud');
-    voiceHud.appendChild(btn);
+
+    if (voiceHud) {
+        voiceHud.appendChild(btn);
+    }
 }
 
 // Keyboard shortcut: Alt + S to toggle settings
